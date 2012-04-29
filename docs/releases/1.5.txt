@@ -85,6 +85,11 @@ Django 1.5 also includes several smaller improvements worth noting:
 * In the localflavor for Canada, "pq" was added to the acceptable codes for
   Quebec. It's an old abbreviation.
 
+* :meth:`QuerySet.bulk_create()
+  <django.db.models.query.QuerySet.bulk_create>` has now a batch_size
+  argument. By default the batch_size is unlimited except for SQLite where
+  single batch is limited so that 1000 parameters per query isn't exceeded.
+
 Backwards incompatible changes in 1.5
 =====================================
 

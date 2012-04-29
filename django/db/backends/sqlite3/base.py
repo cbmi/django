@@ -83,7 +83,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_1000_query_parameters = False
     supports_mixed_date_datetime_comparisons = False
     has_bulk_insert = True
-    can_combine_inserts_with_and_without_auto_increment_pk = True
+    can_combine_inserts_with_and_without_auto_increment_pk = False
 
     def _supports_stddev(self):
         """Confirm support for STDDEV and related stats functions
@@ -104,6 +104,12 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         return has_support
 
 class DatabaseOperations(BaseDatabaseOperations):
+    def bulk_batch_size(self, fields, objs):
+        """
+        SQLite has a limit of 1000 variables per query.
+        """
+        return max(999 / len(fields), 1)
+
     def date_extract_sql(self, lookup_type, field_name):
         # sqlite doesn't support extract, so we fake it with the user-defined
         # function django_extract that's registered in connect(). Note that
