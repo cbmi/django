@@ -289,6 +289,8 @@ almost always do the right thing and trying to override that will lead to
 errors that are difficult to track down. This feature is for advanced use
 only.
 
+Using ``update_fields`` will force an update similarly to ``force_update``.
+
 Updating attributes based on existing fields
 --------------------------------------------
 
@@ -339,19 +341,18 @@ Specifying which fields to save
 
 .. versionadded:: 1.5
 
-If ``save()`` is passed a list of field names as keyword argument
-``update_fields``, only the fields named in that list will be saved to the
-database. This may be desirable if you want to update just one or a few fields
-on an object, as there will be a slight performance benefit from preventing
+If ``save()`` is passed a list of field names in keyword argument
+``update_fields``, only the fields named in that list will be updated.
+This may be desirable if you want to update just one or a few fields on
+an object. There will be a slight performance benefit from preventing
 all of the model fields from being updated in the database. For example:
 
     product.name = 'Name changed again'
     product.save(update_fields=['name'])
 
-
 The ``update_fields`` argument can be any iterable containing strings. An
-not None, but empty ``update_fields`` skips the save completely (no signals
-sent). Specifying ``update_fields`` will force an update.
+not None, but empty ``update_fields`` skips the save completely (signal
+sending is skipped). Specifying ``update_fields`` will force an update.
 
 Deleting objects
 ================

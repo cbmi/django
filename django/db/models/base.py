@@ -449,7 +449,8 @@ class Model(object):
             return getattr(self, field_name)
         return getattr(self, field.attname)
 
-    def save(self, force_insert=False, force_update=False, using=None, update_fields=None):
+    def save(self, force_insert=False, force_update=False, using=None,
+             update_fields=None):
         """
         Saves the current instance. Override this in a subclass if you want to
         control the saving process.
@@ -469,12 +470,14 @@ class Model(object):
                 return
 
             update_fields = frozenset(update_fields)
-            field_names = set([field.name for field in self._meta.fields if not field.primary_key])
-            not_model_fields = update_fields.difference(field_names)
+            field_names = set([field.name for field in self._meta.fields
+                               if not field.primary_key])
+            non_model_fields = update_fields.difference(field_names)
 
-            if not_model_fields:
-                raise ValueError("The following fields do not exist in this model or is m2n field: %s"
-                                 % ', '.join(not_model_fields))
+            if non_model_fields:
+                raise ValueError("The following fields do not exist in this "
+                                 "model or are m2m fields: %s"
+                                 % ', '.join(non_model_fields))
 
         elif self._meta.defered_fields:
             field_names = set([field.name for field in self._meta.fields if not field.primary_key])
@@ -496,7 +499,7 @@ class Model(object):
         """
         using = using or router.db_for_write(self.__class__, instance=self)
         assert not (force_insert and (force_update or update_fields))
-        assert not update_fields or len(update_fields) > 0
+        assert update_fields is None or len(update_fields) > 0
         if cls is None:
             cls = self.__class__
             meta = cls._meta
@@ -527,7 +530,8 @@ class Model(object):
                 if field and getattr(self, parent._meta.pk.attname) is None and getattr(self, field.attname) is not None:
                     setattr(self, parent._meta.pk.attname, getattr(self, field.attname))
 
-                self.save_base(cls=parent, origin=org, using=using, update_fields=update_fields)
+                self.save_base(cls=parent, origin=org, using=using,
+                               update_fields=update_fields)
 
                 if field:
                     setattr(self, field.attname, self._get_pk_val(parent._meta))
@@ -546,10 +550,10 @@ class Model(object):
             record_exists = True
             manager = cls._base_manager
             if pk_set:
-                # Determine whether a record with the primary key already exists.
+                # Determine if we should do an update (pk already exists, forced update,
+                # no force_insert)
                 if ((force_update or update_fields) or (not force_insert and
                         manager.using(using).filter(pk=pk_val).exists())):
-                    # It does already exist, so do an UPDATE.
                     if force_update or non_pks:
                         values = [(f, None, (raw and getattr(self, f.attname) or f.pre_save(self, False))) for f in non_pks]
                         if values:
