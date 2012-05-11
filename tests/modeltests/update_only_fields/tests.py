@@ -18,6 +18,32 @@ class UpdateOnlyFieldsTests(TestCase):
         self.assertEqual(s.gender, 'F')
         self.assertEqual(s.name, 'Ian')
 
+    def test_update_fields_defered(self):
+        s = Person.objects.create(name='Sara', gender='F')
+        self.assertEqual(s.gender, 'F')
+
+        s1 = Person.objects.defer("gender").get(pk=s.pk)
+        s1.name = "Emily"
+        s1.gender = "M"
+        s1.save()
+
+        s2 = Person.objects.get(pk=s1.pk)
+        self.assertEqual(s2.name, "Emily")
+        self.assertEqual(s2.gender, "F")
+
+    def test_update_fields_only(self):
+        s = Person.objects.create(name='Sara', gender='F')
+        self.assertEqual(s.gender, 'F')
+
+        s1 = Person.objects.only('name').get(pk=s.pk)
+        s1.name = "Emily"
+        s1.gender = "M"
+        s1.save()
+
+        s2 = Person.objects.get(pk=s1.pk)
+        self.assertEqual(s2.name, "Emily")
+        self.assertEqual(s2.gender, "F")
+
     def test_update_fields_m2n(self):
         profile_boss = Profile.objects.create(name='Boss', salary=3000)
         e1 = Employee.objects.create(name='Sara', gender='F',

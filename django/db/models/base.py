@@ -476,6 +476,12 @@ class Model(object):
                 raise ValueError("The following fields do not exist in this model or is m2n field: %s"
                                  % ', '.join(not_model_fields))
 
+        elif self._meta.defered_fields:
+            field_names = set([field.name for field in self._meta.fields if not field.primary_key])
+            non_defered_fields = field_names.difference(self._meta.defered_fields)
+            if non_defered_fields:
+                update_fields = frozenset(non_defered_fields)
+
         self.save_base(using=using, force_insert=force_insert,
                        force_update=force_update, update_fields=update_fields)
     save.alters_data = True
