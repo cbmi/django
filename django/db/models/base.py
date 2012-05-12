@@ -524,10 +524,8 @@ class Model(object):
                 if field and getattr(self, parent._meta.pk.attname) is None and getattr(self, field.attname) is not None:
                     setattr(self, parent._meta.pk.attname, getattr(self, field.attname))
 
-                # Note: we are intentionally skipping the force_insert
-                # here - passing it up the inheritance chain is backwards
-                # incompatible. Refs #18305.
                 self.save_base(cls=parent, origin=org, using=using,
+                               force_insert=force_insert,
                                force_update=force_update,
                                update_fields=update_fields)
 

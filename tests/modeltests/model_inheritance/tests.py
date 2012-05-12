@@ -290,3 +290,15 @@ class ModelInheritanceTests(TestCase):
         )
         with self.assertNumQueries(2):
             r.save(force_update=True)
+
+    def test_force_insert(self):
+        with self.assertNumQueries(2):
+            r = Restaurant(
+                pk=1,
+                name="Demon Dogs",
+                address="944 W. Fullerton",
+                serves_hot_dogs=True,
+                serves_pizza=False,
+                rating=2
+            )
+            r.save(force_insert=True)

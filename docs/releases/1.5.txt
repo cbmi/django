@@ -69,6 +69,24 @@ Backwards incompatible changes in 1.5
     deprecation timeline for a given feature, its removal may appear as a
     backwards incompatible change.
 
+Model.save() force_insert behavior changed in inheritance cases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The :meth:`Model.save() <django.db.models.Model.save()>` method didn't pass
+``force_insert`` or ``force_update`` up to parent model saving in Django
+version prior to 1.5. Django 1.5 passes both ``force_insert`` and
+``force_update`` to the parent models. This can result in backwards
+incompatible behavior for ``force_insert``::
+
+  p = Place.objects.create(name='p')
+  r = Restaurant(place=p, serves_pizza=True)
+  r.save(force_insert=True)
+
+Previously this code would have resulted in a forced insert for the
+restaurant, and an update to the place. In 1.5 the above code will result
+in an exception when trying to force-insert the already existing place
+object.
+
 Features deprecated in 1.5
 ==========================
 
