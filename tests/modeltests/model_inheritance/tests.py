@@ -275,3 +275,18 @@ class ModelInheritanceTests(TestCase):
     def test_mixin_init(self):
         m = MixinModel()
         self.assertEqual(m.other_attr, 1)
+
+    def test_force_update(self):
+        """
+        Test that force_update is passed correctly up the inheritance chain.
+        Refs #18305.
+        """
+        r = Restaurant.objects.create(
+            name="Demon Dogs",
+            address="944 W. Fullerton",
+            serves_hot_dogs=True,
+            serves_pizza=False,
+            rating=2
+        )
+        with self.assertNumQueries(2):
+            r.save(force_update=True)
