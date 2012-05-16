@@ -18,7 +18,7 @@ from .models import (Annotation, Article, Author, Celebrity, Child, Cover,
     ManagedModel, Member, NamedCategory, Note, Number, Plaything, PointerA,
     Ranking, Related, Report, ReservedName, Tag, TvChef, Valid, X, Food, Eaten,
     Node, ObjectA, ObjectB, ObjectC, CategoryItem, SimpleCategory,
-    SpecialCategory, OneToOneCategory)
+    SpecialCategory, OneToOneCategory, Ticket18324)
 
 
 class BaseQuerysetTest(TestCase):
@@ -1638,6 +1638,9 @@ class ValuesQuerysetTests(BaseQuerysetTest):
         self.assertValueQuerysetEqual(
             qs, [72]
         )
+
+    def test_ordering(self):
+        print Ticket18324.objects.values('field1').query
 
 
 class WeirdQuerysetSlicingTests(BaseQuerysetTest):

@@ -346,3 +346,15 @@ class OneToOneCategory(models.Model):
 
     def __unicode__(self):
         return "one2one " + self.new_name
+
+class Ticket18324(models.Model):
+    field1 = models.CharField(max_length=100, blank=True, null=True,
+                              default='')
+    field2 = models.CharField(max_length=100, blank=True, null=True,
+                              default='')
+    field3 = models.CharField(max_length=100, blank=True, null=True,
+                              default='')
+
+    class Meta:
+        db_table = 'some_model'
+        ordering = ['field1'] # This should cause errors.
