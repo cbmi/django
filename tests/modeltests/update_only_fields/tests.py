@@ -64,6 +64,20 @@ class UpdateOnlyFieldsTests(TestCase):
         s2 = Person.objects.get(pk=s1.pk)
         self.assertEqual(s2.name, "Sara")
         self.assertEqual(s2.gender, "F")
+    
+    def test_update_fields_only_repeated(self):
+        s = Person.objects.create(name='Sara', gender='F')
+        self.assertEqual(s.gender, 'F')
+
+        s1 = Person.objects.only('name').get(pk=s.pk)
+        s1.gender = 'M'
+        with self.assertNumQueries(1):
+            s1.save()
+        # Test that the deferred class does not remember that gender was
+        # set, instead the model should remember this.
+        s1 = Person.objects.only('name').get(pk=s.pk)
+        with self.assertNumQueries(1):
+            s1.save()
 
     def test_update_fields_m2m(self):
         profile_boss = Profile.objects.create(name='Boss', salary=3000)
