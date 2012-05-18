@@ -459,6 +459,7 @@ class Model(object):
         that the "save" must be an SQL insert or update (or equivalent for
         non-SQL backends), respectively. Normally, they should not be set.
         """
+        using = using or router.db_for_write(self.__class__, instance=self)
         if force_insert and (force_update or update_fields):
             raise ValueError("Cannot force both insert and updating in model saving.")
 
@@ -479,13 +480,15 @@ class Model(object):
                                  "model or are m2m fields: %s"
                                  % ', '.join(non_model_fields))
 
-        elif self._meta.deferred_fields:
+        # If saving to the same database, and this model is deferred, then
+        # automatically do a "update_fields" save on the loaded fields. 
+        elif (not force_insert and self._meta.deferred_fields
+              and using == self._state.db):
             field_names = set([field.name for field in self._meta.fields 
-                                if not field.primary_key])
-            non_deferred_fields = field_names.difference(self._meta.deferred_fields)
-
-            if non_deferred_fields:
-                update_fields = frozenset(non_deferred_fields)
+                               if not field.primary_key])
+            loaded_fields = field_names.difference(self._meta.deferred_fields)
+            if loaded_fields:
+                update_fields = frozenset(loaded_fields)
 
         self.save_base(using=using, force_insert=force_insert,
                        force_update=force_update, update_fields=update_fields)
@@ -499,7 +502,9 @@ class Model(object):
         need for overrides of save() to pass around internal-only parameters
         ('raw', 'cls', and 'origin').
         """
-        using = using or router.db_for_write(self.__class__, instance=self)
+        if raw:
+            using = using or router.db_for_write(self.__class__, instance=self)
+        assert using is not None
         assert not (force_insert and (force_update or update_fields))
         assert update_fields is None or len(update_fields) > 0
         if cls is None:
