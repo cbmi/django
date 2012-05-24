@@ -94,6 +94,14 @@ class ExpressionNode(tree.Node):
     def prepare_database_save(self, unused):
         return self
 
+    def contains_aggregate(self, aggregate_refs):
+        if self.children:
+            return any(child.contains_aggregate(aggregate_refs)
+                       for child in self.children if isinstance(child, ExpressionNode))
+        else:
+            return self.name in aggregate_refs
+
+
 class F(ExpressionNode):
     """
     An expression representing the value of the given field.

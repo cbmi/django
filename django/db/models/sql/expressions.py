@@ -3,16 +3,15 @@ from django.db.models.fields import FieldDoesNotExist
 from django.db.models.sql.constants import LOOKUP_SEP
 
 class SQLEvaluator(object):
-    def __init__(self, expression, query, allow_joins=True):
+    def __init__(self, expression):
         self.expression = expression
-        self.opts = query.get_meta()
         self.cols = {}
-
-        self.contains_aggregate = False
-        self.expression.prepare(self, query, allow_joins)
 
     def prepare(self):
         return self
+
+    def add_to_query(self, query, allow_joins=True):
+        self.expression.prepare(self, query, allow_joins)
 
     def as_sql(self, qn, connection):
         return self.expression.evaluate(self, qn, connection)
@@ -36,16 +35,16 @@ class SQLEvaluator(object):
     def prepare_leaf(self, node, query, allow_joins):
         if not allow_joins and LOOKUP_SEP in node.name:
             raise FieldError("Joined field references are not permitted in this query")
+        opts = query.get_meta()
 
         field_list = node.name.split(LOOKUP_SEP)
         if (len(field_list) == 1 and
-            node.name in query.aggregate_select.keys()):
-            self.contains_aggregate = True
+                node.name in query.aggregate_select.keys()):
             self.cols[node] = query.aggregate_select[node.name]
         else:
             try:
-                field, source, opts, join_list, last, _ = query.setup_joins(
-                    field_list, query.get_meta(),
+                field, source, _, join_list, last, _ = query.setup_joins(
+                    field_list, opts,
                     query.get_initial_alias(), False)
                 col, _, join_list = query.trim_joins(source, join_list, last, False)
 
@@ -53,7 +52,7 @@ class SQLEvaluator(object):
             except FieldDoesNotExist:
                 raise FieldError("Cannot resolve keyword %r into field. "
                                  "Choices are: %s" % (self.name,
-                                                      [f.name for f in self.opts.fields]))
+                                                      [f.name for f in opts.fields]))
 
     ##################################################
     # Vistor methods for final expression evaluation #
