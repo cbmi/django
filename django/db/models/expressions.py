@@ -1,4 +1,7 @@
 import datetime
+
+from django.db.models.aggregates import refs_aggregate
+from django.db.models.sql.constants import LOOKUP_SEP
 from django.utils import tree
 
 class ExpressionNode(tree.Node):
@@ -29,11 +32,22 @@ class ExpressionNode(tree.Node):
 
         if reversed:
             obj = ExpressionNode([other], connector)
-            obj.add(node or self, connector)
+            obj.combine(node or self, connector)
         else:
             obj = node or ExpressionNode([self], connector)
-            obj.add(other, connector)
+            obj.combine(other, connector)
         return obj
+
+    def contains_aggregate(self, existing_aggregates):
+        if self.children:
+            return any([child.contains_aggregate(existing_aggregates)
+                        for child in self.children
+                        if isinstance(child, ExpressionNode)])
+        else:
+            return refs_aggregate(self.name.split(LOOKUP_SEP), existing_aggregates)
+    
+    def prepare_database_save(self, unused):
+        return self
 
     ###################
     # VISITOR METHODS #
@@ -90,9 +104,6 @@ class ExpressionNode(tree.Node):
 
     def __ror__(self, other):
         return self._combine(other, self.OR, True)
-
-    def prepare_database_save(self, unused):
-        return self
 
 class F(ExpressionNode):
     """

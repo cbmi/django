@@ -45,8 +45,9 @@ class Q(tree.Node):
         if not isinstance(other, Q):
             raise TypeError(other)
         obj = type(self)()
-        obj.add(self, conn)
-        obj.add(other, conn)
+        obj.connector = conn
+        obj.combine(self, conn)
+        obj.combine(other, conn)
         return obj
 
     def __or__(self, other):
@@ -57,7 +58,7 @@ class Q(tree.Node):
 
     def __invert__(self):
         obj = type(self)()
-        obj.add(self, self.AND)
+        obj.combine(self, self.AND)
         obj.negate()
         return obj
 

@@ -829,7 +829,7 @@ class Queries1Tests(BaseQuerysetTest):
         q = Note.objects.filter(Q(extrainfo__author=self.a1)|Q(extrainfo=xx)).query
         self.assertEqual(
             len([x[2] for x in q.alias_map.values() if x[2] == q.LOUTER and q.alias_refcount[x[1]]]),
-            1
+            2
         )
 
     def test_ticket17429(self):
@@ -868,7 +868,6 @@ class Queries1Tests(BaseQuerysetTest):
             Item.objects.filter(Q(tags__name='t4')),
             [repr(i) for i in Item.objects.filter(~Q(~Q(tags__name='t4')))])
 
-    @unittest.expectedFailure
     def test_exclude_in(self):
         self.assertQuerysetEqual(
             Item.objects.exclude(Q(tags__name__in=['t4', 't3'])),

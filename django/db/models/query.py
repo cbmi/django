@@ -493,8 +493,7 @@ class QuerySet(object):
                 "Cannot use 'limit' or 'offset' with in_bulk"
         if not id_list:
             return {}
-        qs = self._clone()
-        qs.query.add_filter(('pk__in', id_list))
+        qs = self.filter(pk__in=id_list)
         qs.query.clear_ordering(force_empty=True)
         return dict([(obj._get_pk_val(), obj) for obj in qs])
 

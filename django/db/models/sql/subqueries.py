@@ -39,7 +39,7 @@ class DeleteQuery(Query):
             field = self.model._meta.pk
         for offset in range(0, len(pk_list), GET_ITERATOR_CHUNK_SIZE):
             where = self.where_class()
-            where.add((Constraint(None, field.column, field), 'in',
+            where.combine((Constraint(None, field.column, field), 'in',
                     pk_list[offset:offset + GET_ITERATOR_CHUNK_SIZE]), AND)
             self.do_query(self.model._meta.db_table, where, using=using)
 
@@ -74,7 +74,7 @@ class UpdateQuery(Query):
         self.add_update_values(values)
         for offset in range(0, len(pk_list), GET_ITERATOR_CHUNK_SIZE):
             self.where = self.where_class()
-            self.where.add((Constraint(None, pk_field.column, pk_field), 'in',
+            self.where.combine((Constraint(None, pk_field.column, pk_field), 'in',
                     pk_list[offset:offset + GET_ITERATOR_CHUNK_SIZE]),
                     AND)
             self.get_compiler(using).execute_sql(None)
@@ -132,7 +132,8 @@ class UpdateQuery(Query):
             query = UpdateQuery(model)
             query.values = values
             if self.related_ids is not None:
-                query.add_filter(('pk__in', self.related_ids))
+                query.add_filter(('pk__in', self.related_ids),
+                                 target_clause=query.where)
             result.append(query)
         return result
 
@@ -210,7 +211,8 @@ class DateQuery(Query):
         self.order_by = order == 'ASC' and [1] or [-1]
 
         if field.null:
-            self.add_filter(("%s__isnull" % field_name, False))
+            self.add_filter(("%s__isnull" % field_name, False),
+                            target_clause=self.where)
 
 class AggregateQuery(Query):
     """

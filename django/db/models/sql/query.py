@@ -14,6 +14,7 @@ from django.utils.encoding import force_unicode
 from django.utils.tree import Node
 from django.db import connections, DEFAULT_DB_ALIAS
 from django.db.models import signals
+from django.db.models.aggregates import refs_aggregate
 from django.db.models.expressions import ExpressionNode
 from django.db.models.fields import FieldDoesNotExist
 from django.db.models.query_utils import InvalidQuery
@@ -515,14 +516,14 @@ class Query(object):
                 # Since 'self' matches everything, add an explicit "include
                 # everything" where-constraint so that connections between the
                 # where clauses won't exclude valid results.
-                self.where.add(EverythingNode(), AND)
+                self.where.combine(EverythingNode(), AND)
         elif self.where:
             # rhs has an empty where clause.
             w = self.where_class()
-            w.add(EverythingNode(), AND)
+            w.combine(EverythingNode(), AND)
         else:
             w = self.where_class()
-        self.where.add(w, connector)
+        self.where.combine(w, connector)
 
         # Selection columns and extra extensions are those provided by 'rhs'.
         self.select = []
@@ -955,18 +956,19 @@ class Query(object):
                 self.unref_alias(alias)
         self.included_inherited_models = {}
 
-    def need_force_having(self, q_object):
+    def need_having(self, q_object):
         """
         Returns whether or not all elements of this q_object need to be put
         together in the HAVING clause.
         """
         for child in q_object.children:
             if isinstance(child, Node):
-                if self.need_force_having(child):
+                if self.need_having(child):
                     return True
-            else:
-                if child[0].split(LOOKUP_SEP)[0] in self.aggregates:
-                    return True
+            elif (refs_aggregate(child[0].split(LOOKUP_SEP), self.aggregates)
+                  or (hasattr(child[1], 'contains_aggregate')
+                      and child[1].contains_aggregate(self.aggregates))):
+                return True
         return False
 
     def add_aggregate(self, aggregate, model, alias, is_summary):
@@ -1017,18 +1019,11 @@ class Query(object):
         # Add the aggregate to the query
         aggregate.add_to_query(self, alias, col=col, source=source, is_summary=is_summary)
 
-    def add_filter(self, filter_expr, connector=AND, negate=False, trim=False,
-            can_reuse=None, process_extras=True, force_having=False):
+    def add_filter(self, filter_expr, connector=AND, trim=False, can_reuse=None,
+                   process_extras=True, target_clause=None, path=None):
         """
         Add a single filter to the query. The 'filter_expr' is a pair:
         (filter_string, value). E.g. ('name__contains', 'fred')
-
-        If 'negate' is True, this is an exclude() filter. It's important to
-        note that this method does not negate anything in the where-clause
-        object when inserting the filter constraints. This is because negated
-        filters often require multiple calls to add_filter() and the negation
-        should only happen once. So the caller is responsible for this (the
-        caller will normally be add_q(), so that as an example).
 
         If 'trim' is True, we automatically trim the final join group (used
         internally when constructing nested queries).
@@ -1043,8 +1038,18 @@ class Query(object):
         joining process will be processed. This parameter is set to False
         during the processing of extra filters to avoid infinite recursion.
         """
+        assert target_clause is not None
+        if path is None:
+            path = []
         arg, value = filter_expr
         parts = arg.split(LOOKUP_SEP)
+        in_having = 'HAVING' in path
+        negate = bool([p for p in path if 'NOT' in p])
+        if (not in_having and (refs_aggregate(parts, self.aggregates)
+                               or (hasattr(value, 'contains_aggregate')
+                                   and value.contains_aggregate(self.aggregates)))):
+            target_clause = self.switch_to_having(path)
+            in_having = True
         if not parts:
             raise FieldError("Cannot parse keyword query %r" % arg)
 
@@ -1074,10 +1079,6 @@ class Query(object):
                         lookup_type = parts.pop()
                         break
 
-        # By default, this is a WHERE clause. If an aggregate is referenced
-        # in the value, the filter will be promoted to a HAVING
-        having_clause = False
-
         # Interpret '__exact=None' as the sql 'is NULL'; otherwise, reject all
         # uses of None as a query value.
         if value is None:
@@ -1090,15 +1091,12 @@ class Query(object):
         elif isinstance(value, ExpressionNode):
             # If value is a query expression, evaluate it
             value = SQLEvaluator(value, self)
-            having_clause = value.contains_aggregate
 
         for alias, aggregate in self.aggregates.items():
             if alias in (parts[0], LOOKUP_SEP.join(parts)):
                 entry = self.where_class()
-                entry.add((aggregate, lookup_type, value), AND)
-                if negate:
-                    entry.negate()
-                self.having.add(entry, connector)
+                entry.combine((aggregate, lookup_type, value), AND)
+                target_clause.combine(entry, connector)
                 return
 
         opts = self.get_meta()
@@ -1112,7 +1110,7 @@ class Query(object):
                     process_extras=process_extras)
         except MultiJoin as e:
             self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]),
-                    can_reuse)
+                               can_reuse, target_clause=target_clause, path=path)
             return
 
         table_promote = False
@@ -1165,14 +1163,18 @@ class Query(object):
             self.promote_alias_chain(join_it, join_promote)
             self.promote_alias_chain(table_it, table_promote or join_promote)
 
-        if having_clause or force_having:
+        # Create a new intermediatry AND node - we might need to add more nodes
+        # later on (for example extra_filters or NULL value removal), so create
+        # a node to make sure these constraints are ANDed to the added constrain
+        # below.
+        int_node = self.where_class(connector=AND)
+        int_node.add((Constraint(alias, col, field), lookup_type, value))
+        target_clause.add(int_node)
+        target_clause = int_node
+
+        if in_having:
             if (alias, col) not in self.group_by:
                 self.group_by.append((alias, col))
-            self.having.add((Constraint(alias, col, field), lookup_type, value),
-                connector)
-        else:
-            self.where.add((Constraint(alias, col, field), lookup_type, value),
-                connector)
 
         if negate:
             self.promote_alias_chain(join_list)
@@ -1181,13 +1183,12 @@ class Query(object):
                     for alias in join_list:
                         if self.alias_map[alias].join_type == self.LOUTER:
                             j_col = self.alias_map[alias].rhs_join_col
-                            entry = self.where_class()
-                            entry.add(
+                            entry = self.where_class(negated=negate)
+                            entry.combine(
                                 (Constraint(alias, j_col, None), 'isnull', True),
                                 AND
                             )
-                            entry.negate()
-                            self.where.add(entry, AND)
+                            target_clause.combine(entry, AND)
                             break
                 if self.is_nullable(field):
                     # In SQL NULL = anyvalue returns unknown, and NOT unknown
@@ -1198,65 +1199,81 @@ class Query(object):
                     # be included in the final resultset. We are essentially creating
                     # SQL like this here: NOT (col IS NOT NULL), where the first NOT
                     # is added in upper layers of the code.
-                    self.where.add((Constraint(alias, col, None), 'isnull', False), AND)
+                    target_clause.combine((Constraint(alias, col, None), 'isnull', False), AND)
 
         if can_reuse is not None:
             can_reuse.update(join_list)
         if process_extras:
             for filter in extra_filters:
-                self.add_filter(filter, negate=negate, can_reuse=can_reuse,
-                        process_extras=False)
+                self.add_filter(filter, path=path, can_reuse=can_reuse,
+                        process_extras=False, target_clause=target_clause)
 
-    def add_q(self, q_object, used_aliases=None, force_having=False):
+    def switch_to_having(self, path):
+        target_clause = self.having
+        if len([p for p in path if 'NOT' in p]) % 2:
+            # There is an odd number of NOT operators in the path - 
+            # so we must append a NOT node to the the having clause.
+            target_clause = self.where_class(negated=True)
+            self.having.add(target_clause)
+        return target_clause
+
+    def add_q(self, q_object, used_aliases=None, target_clause=None, path=None):
         """
         Adds a Q-object to the current filter.
 
         Can also be used to add anything that has an 'add_to_query()' method.
+
+        The parameters used_aliases, path and target_clause are used to keep
+        track of where we are currently.
+          - The path variable is a stack of boolean operators used to get here,
+            and information about the switch-point to having.
+          - The target_clause contains the current in-use WhereNode.
+          - The used_aliases keeps track of all the referenced aliases.
         """
+        if target_clause is None:
+            target_clause = self.where
         if used_aliases is None:
             used_aliases = self.used_aliases
+        if path is None:
+            path = []
         if hasattr(q_object, 'add_to_query'):
             # Complex custom objects are responsible for adding themselves.
             q_object.add_to_query(self, used_aliases)
         else:
-            if self.where and q_object.connector != AND and len(q_object) > 1:
-                self.where.start_subtree(AND)
-                subtree = True
-            else:
-                subtree = False
-            connector = AND
-            if q_object.connector == OR and not force_having:
-                force_having = self.need_force_having(q_object)
+            connector = q_object.connector
+            negated = q_object.negated
+            path.append(connector + ' NOT' if negated else '')
+            if 'HAVING' not in path and connector == OR and self.need_having(q_object):
+                # The whole subtree must go to HAVING clause once we are inside an
+                # ORred branch and at least one clause targets the having clause.
+                target_clause = self.switch_to_having(path)
+                path.append('HAVING')
+
+            # Note that if the connector happens to match what we have already in
+            # the tree, the combine will be a no-op.
+            target_clause = target_clause.combine(
+                self.where_class(connector=connector, negated=negated),
+                target_clause.connector)
+
             for child in q_object.children:
                 if connector == OR:
                     refcounts_before = self.alias_refcount.copy()
-                if force_having:
-                    self.having.start_subtree(connector)
-                else:
-                    self.where.start_subtree(connector)
                 if isinstance(child, Node):
-                    self.add_q(child, used_aliases, force_having=force_having)
+                    self.add_q(child, used_aliases, target_clause, path)
                 else:
-                    self.add_filter(child, connector, q_object.negated,
-                            can_reuse=used_aliases, force_having=force_having)
-                if force_having:
-                    self.having.end_subtree()
-                else:
-                    self.where.end_subtree()
-
+                    self.add_filter(child, connector, can_reuse=used_aliases,
+                                    target_clause=target_clause, path=path)
                 if connector == OR:
                     # Aliases that were newly added or not used at all need to
                     # be promoted to outer joins if they are nullable relations.
                     # (they shouldn't turn the whole conditional into the empty
                     # set just because they don't match anything).
                     self.promote_unused_aliases(refcounts_before, used_aliases)
-                connector = q_object.connector
-            if q_object.negated:
-                self.where.negate()
-            if subtree:
-                self.where.end_subtree()
         if self.filter_is_sticky:
             self.used_aliases = used_aliases
+        if path.pop() == 'HAVING':
+            # In case we added HAVING clause above, we need to pop two times.
+            path.pop()
 
     def setup_joins(self, names, opts, alias, dupe_multis, allow_many=True,
             allow_explicit_fk=False, can_reuse=None, negate=False,
@@ -1541,15 +1558,18 @@ class Query(object):
             except KeyError:
                 self.dupe_avoidance[ident, name] = set([alias])
 
-    def split_exclude(self, filter_expr, prefix, can_reuse):
+    def split_exclude(self, filter_expr, prefix, can_reuse,
+                      target_clause=None, path=None):
         """
         When doing an exclude against any kind of N-to-many relation, we need
         to use a subquery. This method constructs the nested query, given the
         original exclude filter (filter_expr) and the portion up to the first
         N-to-many relation field.
         """
+        assert target_clause is not None
         query = Query(self.model)
-        query.add_filter(filter_expr, can_reuse=can_reuse)
+        query.add_filter(filter_expr, can_reuse=can_reuse,
+                         target_clause=query.where)
         query.bump_prefix()
         query.clear_ordering(True)
         query.set_start(prefix)
@@ -1558,10 +1578,11 @@ class Query(object):
         # database from tripping over IN (...,NULL,...) selects and returning
         # nothing
         alias, col = query.select[0]
-        query.where.add((Constraint(alias, col, None), 'isnull', False), AND)
+        query.where.combine((Constraint(alias, col, None), 'isnull', False), AND)
 
-        self.add_filter(('%s__in' % prefix, query), negate=True, trim=True,
-                can_reuse=can_reuse)
+        self.add_filter(('%s__in' % prefix, query), trim=True,
+                        can_reuse=can_reuse, target_clause=target_clause,
+                        path=path)
 
         # If there's more than one join in the inner query (before any initial
         # bits were trimmed -- which means the last active table is more than
@@ -1573,8 +1594,8 @@ class Query(object):
         active_positions = [pos for (pos, count) in
                 enumerate(query.alias_refcount.itervalues()) if count]
         if active_positions[-1] > 1:
-            self.add_filter(('%s__isnull' % prefix, False), negate=True,
-                    trim=True, can_reuse=can_reuse)
+            self.add_filter(('%s__isnull' % prefix, False), path=path,
+                    trim=True, can_reuse=can_reuse, target_clause=target_clause)
 
     def set_limits(self, low=None, high=None):
         """
@@ -1780,7 +1801,7 @@ class Query(object):
             # This is order preserving, since self.extra_select is a SortedDict.
             self.extra.update(select_pairs)
         if where or params:
-            self.where.add(ExtraWhere(where, params), AND)
+            self.where.combine(ExtraWhere(where, params), AND)
         if tables:
             self.extra_tables += tuple(tables)
         if order_by:

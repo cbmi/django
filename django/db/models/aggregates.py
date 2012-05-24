@@ -1,6 +1,19 @@
 """
 Classes to represent the definitions of aggregate functions.
 """
+from django.db.models.sql.constants import LOOKUP_SEP
+
+def refs_aggregate(lookup_parts, aggregates):
+    """
+    A little helper method to check if the lookup_parts contains references
+    to the given aggregates set. Because the LOOKUP_SEP is contained in the
+    default annotation names we must check each prefix of the lookup_parts
+    for match.
+    """
+    for i in range(0, len(lookup_parts) + 1):
+        if LOOKUP_SEP.join(lookup_parts[0:i]) in aggregates:
+            return True
+    return False
 
 class Aggregate(object):
     """

@@ -1037,11 +1037,11 @@ class SQLUpdateCompiler(SQLCompiler):
             idents = []
             for rows in query.get_compiler(self.using).execute_sql(MULTI):
                 idents.extend([r[0] for r in rows])
-            self.query.add_filter(('pk__in', idents))
+            self.query.add_filter(('pk__in', idents), target_clause=self.query.where)
             self.query.related_ids = idents
         else:
             # The fast path. Filters and updates in one query.
-            self.query.add_filter(('pk__in', query))
+            self.query.add_filter(('pk__in', query), target_clause=self.query.where)
         for alias in self.query.tables[1:]:
             self.query.alias_refcount[alias] = 0
 

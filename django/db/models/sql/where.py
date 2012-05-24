@@ -37,18 +37,17 @@ class WhereNode(tree.Node):
     """
     default = AND
 
-    def add(self, data, connector):
+    def _prepare_data(self, data):
         """
-        Add a node to the where-tree. If the data is a list or tuple, it is
-        expected to be of the form (obj, lookup_type, value), where obj is
-        a Constraint object, and is then slightly munged before being stored
-        (to avoid storing any reference to field objects). Otherwise, the 'data'
-        is stored unchanged and can be any class with an 'as_sql()' method.
+        Prepare data for addition to the tree. If the data is a list or tuple,
+        it is expected to be of the form (obj, lookup_type, value), where obj
+        is a Constraint object, and is then slightly munged before being
+        stored (to avoid storing any reference to field objects). Otherwise,
+        the 'data' is stored unchanged and can be any class with an 'as_sql()'
+        method.
         """
         if not isinstance(data, (list, tuple)):
-            super(WhereNode, self).add(data, connector)
-            return
-
+            return data
         obj, lookup_type, value = data
         if isinstance(value, collections.Iterator):
             # Consume any generators immediately, so that we can determine
@@ -68,9 +67,7 @@ class WhereNode(tree.Node):
 
         if hasattr(obj, "prepare"):
             value = obj.prepare(lookup_type, value)
-
-        super(WhereNode, self).add(
-                (obj, lookup_type, value_annotation, value), connector)
+        return (obj, lookup_type, value_annotation, value)
 
     def as_sql(self, qn, connection):
         """
@@ -85,7 +82,13 @@ class WhereNode(tree.Node):
             return None, []
         result = []
         result_params = []
-        empty = True
+        if self.connector == AND:
+            full_needed = len(self.children)
+            empty_needed = 1
+        else:
+            empty_needed = len(self.children)
+            full_needed = 1
+
         for child in self.children:
             try:
                 if hasattr(child, 'as_sql'):
@@ -95,29 +98,26 @@ class WhereNode(tree.Node):
                     sql, params = self.make_atom(child, qn, connection)
 
             except EmptyResultSet:
-                if self.connector == AND and not self.negated:
-                    # We can bail out early in this particular case (only).
-                    raise
-                elif self.negated:
-                    empty = False
-                continue
+                empty_needed -= 1
             except FullResultSet:
-                if self.connector == OR:
-                    if self.negated:
-                        empty = True
-                        break
-                    # We match everything. No need for any constraints.
-                    return '', []
-                if self.negated:
-                    empty = True
-                continue
+                full_needed -= 1
+            else:
+                if sql:
+                    result.append(sql)
+                    result_params.extend(params)
+                else:
+                    full_needed -= 1
 
-            empty = False
-            if sql:
-                result.append(sql)
-                result_params.extend(params)
-        if empty:
-            raise EmptyResultSet
+            if empty_needed == 0:
+                if self.negated:
+                    return '', []
+                else:
+                    raise
+            if full_needed == 0:
+                if self.negated:
+                    raise EmptyResultSet
+                else:
+                    return '', []
 
         conn = ' %s ' % self.connector
         sql_string = conn.join(result)
