@@ -144,3 +144,15 @@ class Node(object):
         Negate the sense of the root connector.
         """
         self.negated = not self.negated
+
+    def prune_tree(self):
+        """
+        Remove immediate childrens guaranteed to not alter the result from the
+        tree.
+        """
+        for child in self.children[:]:
+            if not isinstance(child, Node):
+                continue
+            if not child.negated and len(child) == 1:
+                self.children.remove(child)
+                self.children.extend(child.children)

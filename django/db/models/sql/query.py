@@ -1167,10 +1167,11 @@ class Query(object):
         # later on (for example extra_filters or NULL value removal), so create
         # a node to make sure these constraints are ANDed to the added constrain
         # below.
-        int_node = self.where_class(connector=AND)
-        int_node.add((Constraint(alias, col, field), lookup_type, value))
-        target_clause.add(int_node)
-        target_clause = int_node
+        parent_clause = target_clause
+        target_clause = self.where_class(connector=AND)
+        parent_clause.add(target_clause)
+        
+        target_clause.add((Constraint(alias, col, field), lookup_type, value))
 
         if in_having:
             if (alias, col) not in self.group_by:
@@ -1207,6 +1208,9 @@ class Query(object):
             for filter in extra_filters:
                 self.add_filter(filter, path=path, can_reuse=can_reuse,
                         process_extras=False, target_clause=target_clause)
+        # Check if we can get rid of the added intermediate node. In the
+        # common case it has just one child and we can get rid of it.
+        parent_clause.prune_tree()
 
     def switch_to_having(self, path):
         target_clause = self.having
