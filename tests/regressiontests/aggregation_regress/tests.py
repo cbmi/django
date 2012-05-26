@@ -8,6 +8,7 @@ from operator import attrgetter
 from django.core.exceptions import FieldError
 from django.db.models import Count, Max, Avg, Sum, StdDev, Variance, F, Q
 from django.test import TestCase, Approximate, skipUnlessDBFeature
+from django.utils.unittest import expectedFailure
 
 from .models import Author, Book, Publisher, Clues, Entries, HardbackBook
 
@@ -844,14 +845,14 @@ class AggregationTests(TestCase):
 
         # The name of the explicitly provided annotation name in this case
         # poses no problem
-        qs = Author.objects.annotate(book_cnt=Count('book')).filter(book_cnt=2)
+        qs = Author.objects.annotate(book_cnt=Count('book')).filter(book_cnt=2).order_by('name')
         self.assertQuerysetEqual(
             qs,
             ['Peter Norvig'],
             lambda b: b.name
         )
         # Neither in this case
-        qs = Author.objects.annotate(book_count=Count('book')).filter(book_count=2)
+        qs = Author.objects.annotate(book_count=Count('book')).filter(book_count=2).order_by('name')
         self.assertQuerysetEqual(
             qs,
             ['Peter Norvig'],
@@ -859,9 +860,54 @@ class AggregationTests(TestCase):
         )
         # This case used to fail because the ORM couldn't resolve the
         # automatically generated annotation name `book__count`
-        qs = Author.objects.annotate(Count('book')).filter(book__count=2)
+        qs = Author.objects.annotate(Count('book')).filter(book__count=2).order_by('name')
         self.assertQuerysetEqual(
             qs,
             ['Peter Norvig'],
+            lambda b: b.name
+        )
+
+    def test_negated_aggregation(self):
+        expected_results = Author.objects.exclude(
+            pk__in=Author.objects.annotate(book_cnt=Count('book')).filter(book_cnt=2)
+        ).order_by('name')
+        expected_results = [a.name for a in expected_results]
+        qs = Author.objects.annotate(book_cnt=Count('book')).exclude(Q(book_cnt=2),Q(book_cnt=2)).order_by('name')
+        self.assertQuerysetEqual(
+            qs,
+            expected_results,
+            lambda b: b.name
+        )
+        expected_results = Author.objects.exclude(
+            pk__in=Author.objects.annotate(book_cnt=Count('book')).filter(book_cnt=2)
+        ).order_by('name')
+        expected_results = [a.name for a in expected_results]
+        qs = Author.objects.annotate(book_cnt=Count('book')).exclude(Q(book_cnt=2)|Q(book_cnt=2)).order_by('name')
+        self.assertQuerysetEqual(
+            qs,
+            expected_results,
+            lambda b: b.name
+        )
+
+    def test_name_filters(self):
+        qs = Author.objects.annotate(Count('book')).filter(
+            Q(book__count__exact=2)|Q(name='Adrian Holovaty')
+        ).order_by('name')
+        self.assertQuerysetEqual(
+            qs,
+            ['Adrian Holovaty', 'Peter Norvig'],
+            lambda b: b.name
+        )
+
+    def test_name_expressions(self):
+        # Test that aggregates are spotted corretly from F objects.
+        # Note that Adrian's age is 34 in the fixtures, and he has one book
+        # so both conditions match one author.
+        qs = Author.objects.annotate(Count('book')).filter(
+            Q(name='Peter Norvig')|Q(age=F('book__count') + 33)
+        ).order_by('name')
+        self.assertQuerysetEqual(
+            qs,
+            ['Adrian Holovaty', 'Peter Norvig'],
             lambda b: b.name
         )
