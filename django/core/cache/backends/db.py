@@ -9,6 +9,7 @@ except ImportError:
 
 from django.core.cache.backends.base import BaseCache
 from django.db import connections, router, transaction, DatabaseError, models
+from django.db.transaction import force_managed
 from django.utils import timezone
 
 def create_cache_model(table):
@@ -57,11 +58,9 @@ class DatabaseCache(BaseDatabaseCache):
         now = timezone.now()
         if obj.expires < now:
             obj.delete()
-            transaction.commit_unless_managed(using=db)
             return default
         # Note: we must commit_unless_managed even for read-operations to
         # avoid transaction leaks.
-        transaction.commit_unless_managed(using=db)
         value = connections[db].ops.process_clob(obj.value)
         return pickle.loads(base64.decodestring(value))
 
@@ -77,60 +76,55 @@ class DatabaseCache(BaseDatabaseCache):
 
     def _base_set(self, mode, key, value, timeout=None):
         db = router.db_for_write(self.cache_model_class)
-        if timeout is None:
-            timeout = self.default_timeout
-        now = timezone.now()
-        now = now.replace(microsecond=0)
-        exp = now + timedelta(seconds=timeout)
-        num = self.objects.using(db).count()
-        if num > self._max_entries:
-            self._cull(db, now)
-        pickled = pickle.dumps(value, pickle.HIGHEST_PROTOCOL)
-        encoded = base64.encodestring(pickled).strip()
         try:
-            try:
-                obj = self.objects.using(db).only('cache_key').get(cache_key=key)
-                if mode == 'set' or (mode == 'add' and obj.expires < now):
-                    obj.expires = exp
-                    obj.value = encoded
-                    obj.save(using=db)
-                else:
-                    return False
-            except self.cache_model_class.DoesNotExist:
-                self.objects.using(db).create(cache_key=key, expires=exp, value=encoded)
+            with force_managed(using=db):
+                if timeout is None:
+                    timeout = self.default_timeout
+                now = timezone.now()
+                now = now.replace(microsecond=0)
+                exp = now + timedelta(seconds=timeout)
+                num = self.objects.using(db).count()
+                if num > self._max_entries:
+                    self._cull(db, now)
+                pickled = pickle.dumps(value, pickle.HIGHEST_PROTOCOL)
+                encoded = base64.encodestring(pickled).strip()
+                try:
+                    val = self.objects.using(db).values_list(
+                        'expires').get(cache_key=key)
+                    if mode == 'set' or (mode == 'add' and val[0] < now):
+                        obj = self.cache_model_class(expires=exp, value=encoded,
+                                                     cache_key=key)
+                        obj.save(using=db, force_update=True)
+                    else:
+                        return False
+                except self.cache_model_class.DoesNotExist:
+                    self.objects.using(db).create(cache_key=key, expires=exp,
+                                                  value=encoded)
         except DatabaseError:
-            # To be threadsafe, updates/inserts are allowed to fail silently
-            transaction.rollback_unless_managed(using=db)
             return False
-        else:
-            transaction.commit_unless_managed(using=db)
-            return True
+        return True
 
     def delete(self, key, version=None):
         key = self.make_key(key, version=version)
         self.validate_key(key)
 
         db = router.db_for_write(self.cache_model_class)
-        self.objects.using(db).filter(cache_key=key).delete()
-        transaction.commit_unless_managed(using=db)
+        with force_managed(using=db):
+            self.objects.using(db).filter(cache_key=key).delete()
 
     def has_key(self, key, version=None):
         key = self.make_key(key, version=version)
         self.validate_key(key)
-
-        db = router.db_for_read(self.cache_model_class)
-
+        db = router.db_for_write(self.cache_model_class)
         now = timezone.now()
         now = now.replace(microsecond=0)
-        ret = self.objects.using(db).filter(cache_key=key, expires__gt=now).exists()
-        transaction.commit_unless_managed(using=db)
-        return ret
+        return self.objects.using(db).filter(cache_key=key, expires__gt=now).exists()
 
     def _cull(self, db, now):
         if self._cull_frequency == 0:
             # cull might be used inside other dbcache operations possibly already
             # doing commits themselves - so do not commit in clear.
-            self.clear(commit=False)
+            self.clear()
         else:
             # When USE_TZ is True, 'now' will be an aware datetime in UTC.
             self.objects.using(db).filter(expires__lt=now).delete()
@@ -141,11 +135,10 @@ class DatabaseCache(BaseDatabaseCache):
                     'cache_key').order_by('cache_key')[cull_num][0]
                 self.objects.using(db).filter(cache_key__lt=limit).delete()
 
-    def clear(self, commit=True):
+    def clear(self):
         db = router.db_for_write(self.cache_model_class)
-        self.objects.using(db).delete()
-        if commit:
-            transaction.commit_unless_managed(using=db)
+        with force_managed(using=db):
+            self.objects.using(db).delete()
 
 # For backwards compatibility
 class CacheClass(DatabaseCache):

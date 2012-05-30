@@ -196,10 +196,10 @@ class Transaction(object):
         self.using = using
 
     def __enter__(self):
-        self.entering(self.using)
+        self.entering(self.using, self)
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.exiting(exc_value, self.using)
+        self.exiting(exc_value, self.using, self)
 
     def __call__(self, func):
         @wraps(func)
@@ -235,14 +235,29 @@ def autocommit(using=None):
     this decorator is useful if you globally activated transaction management in
     your settings file and want the default behavior in some view functions.
     """
-    def entering(using):
+    def entering(using, obj):
         enter_transaction_management(managed=False, using=using)
         managed(False, using=using)
 
-    def exiting(exc_value, using):
+    def exiting(exc_value, using, obj):
         leave_transaction_management(using=using)
 
     return _transaction_func(entering, exiting, using)
+
+def _do_exit(exc_value, using):
+    try:
+        if exc_value is not None:
+            if is_dirty(using=using):
+                rollback(using=using)
+        else:
+            if is_dirty(using=using):
+                try:
+                    commit(using=using)
+                except:
+                    rollback(using=using)
+                    raise
+    finally:
+        leave_transaction_management(using=using)
 
 def commit_on_success(using=None):
     """
@@ -251,24 +266,12 @@ def commit_on_success(using=None):
     a rollback is made. This is one of the most common ways to do transaction
     control in Web apps.
     """
-    def entering(using):
+    def entering(using, obj):
         enter_transaction_management(using=using)
         managed(True, using=using)
 
-    def exiting(exc_value, using):
-        try:
-            if exc_value is not None:
-                if is_dirty(using=using):
-                    rollback(using=using)
-            else:
-                if is_dirty(using=using):
-                    try:
-                        commit(using=using)
-                    except:
-                        rollback(using=using)
-                        raise
-        finally:
-            leave_transaction_management(using=using)
+    def exiting(exc_value, using, obj):
+        _do_exit(exc_value, using)
 
     return _transaction_func(entering, exiting, using)
 
@@ -279,11 +282,25 @@ def commit_manually(using=None):
     own -- it's up to the user to call the commit and rollback functions
     themselves.
     """
-    def entering(using):
+    def entering(using, obj):
         enter_transaction_management(using=using)
         managed(True, using=using)
 
-    def exiting(exc_value, using):
+    def exiting(exc_value, using, obj):
         leave_transaction_management(using=using)
 
+    return _transaction_func(entering, exiting, using)
+
+def force_managed(using=None):
+    def entering(using, obj):
+        if not is_managed(using=using):
+            enter_transaction_management(using=using)
+            managed(True, using=using)
+            obj.forced_managed = True
+        else:
+            obj.forced_managed = False
+    
+    def exiting(exc_value, using, obj):
+        if obj.forced_managed:
+            _do_exit(exc_value, using)
     return _transaction_func(entering, exiting, using)
