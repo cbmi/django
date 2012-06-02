@@ -79,10 +79,17 @@ class ConnectionHandler(object):
             conn['ENGINE'] = 'django.db.backends.dummy'
         conn.setdefault('OPTIONS', {})
         conn.setdefault('TIME_ZONE', 'UTC' if settings.USE_TZ else settings.TIME_ZONE)
-        for setting in ['NAME', 'USER', 'PASSWORD', 'HOST', 'PORT']:
+        conn.setdefault('SCHEMA', settings.DEFAULT_SCHEMA)
+        for setting in ['NAME', 'USER', 'PASSWORD', 'HOST', 'PORT', 'SCHEMA']:
             conn.setdefault(setting, '')
         for setting in ['TEST_CHARSET', 'TEST_COLLATION', 'TEST_NAME', 'TEST_MIRROR']:
             conn.setdefault(setting, None)
+        # Some databases need a unique prefix for schemas to avoid name
+        # collisions between production database or another testing database
+        # in the same instance. This needs to be a string unlike the other
+        # TEST_ settings above.
+        conn.setdefault('TEST_SCHEMA_PREFIX', '')
+        conn.setdefault('TEST_SCHEMAS', [])
 
     def __getitem__(self, alias):
         if hasattr(self._connections, alias):
@@ -146,6 +153,17 @@ class ConnectionRouter(object):
 
     db_for_read = _router_func('db_for_read')
     db_for_write = _router_func('db_for_write')
+
+    def schema_for_db(self, model, database=DEFAULT_DB_ALIAS, **hints):
+        for router in self.routers:
+            try:
+                method = router.schema_for_db
+            except AttributeError:
+                pass
+            else:
+                schema = method(model, database, **hints)
+                if schema is not None:
+                    return schema
 
     def allow_relation(self, obj1, obj2, **hints):
         for router in self.routers:

@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.management.color import no_style
 from django.core.exceptions import ImproperlyConfigured
 from django.db import (backend, connection, connections, DEFAULT_DB_ALIAS,
-    IntegrityError, transaction)
+    IntegrityError, transaction, QName)
 from django.db.backends.signals import connection_created
 from django.db.backends.postgresql_psycopg2 import version as pg_version
 from django.db.utils import ConnectionHandler, DatabaseError, load_backend
@@ -164,7 +164,7 @@ class ParameterHandlingTest(TestCase):
         "An executemany call with too many/not enough parameters will raise an exception (Refs #12612)"
         cursor = connection.cursor()
         query = ('INSERT INTO %s (%s, %s) VALUES (%%s, %%s)' % (
-            connection.introspection.table_name_converter('backends_square'),
+            connection.introspection.identifier_converter('backends_square'),
             connection.ops.quote_name('root'),
             connection.ops.quote_name('square')
         ))
@@ -204,13 +204,13 @@ class LongNameTest(TestCase):
         VLM = models.VeryLongModelNameZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
         VLM_m2m = VLM.m2m_also_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.through
         tables = [
-            VLM._meta.db_table,
-            VLM_m2m._meta.db_table,
+            VLM._meta.qualified_name,
+            VLM_m2m._meta.qualified_name
         ]
         sequences = [
             {
                 'column': VLM._meta.pk.column,
-                'table': VLM._meta.db_table
+                'qname': QName(None, VLM._meta.db_table, False),
             },
         ]
         cursor = connection.cursor()
@@ -348,7 +348,7 @@ class BackendTestCase(TestCase):
     def create_squares_with_executemany(self, args):
         cursor = connection.cursor()
         opts = models.Square._meta
-        tbl = connection.introspection.table_name_converter(opts.db_table)
+        tbl = connection.qualified_name(models.Square, compose=True)
         f1 = connection.ops.quote_name(opts.get_field('root').column)
         f2 = connection.ops.quote_name(opts.get_field('square').column)
         query = 'INSERT INTO %s (%s, %s) VALUES (%%s, %%s)' % (tbl, f1, f2)
@@ -393,7 +393,7 @@ class BackendTestCase(TestCase):
         opts2 = models.Person._meta
         f3, f4 = opts2.get_field('first_name'), opts2.get_field('last_name')
         query2 = ('SELECT %s, %s FROM %s ORDER BY %s'
-          % (qn(f3.column), qn(f4.column), connection.introspection.table_name_converter(opts2.db_table),
+          % (qn(f3.column), qn(f4.column), connection.qualified_name(models.Person, compose=True),
              qn(f3.column)))
         cursor = connection.cursor()
         cursor.execute(query2)
@@ -415,7 +415,7 @@ class BackendTestCase(TestCase):
     def test_duplicate_table_error(self):
         """ Test that creating an existing table returns a DatabaseError """
         cursor = connection.cursor()
-        query = 'CREATE TABLE %s (id INTEGER);' % models.Article._meta.db_table
+        query = 'CREATE TABLE %s (id INTEGER);' % connection.qualified_name(models.Article, compose=True)
         with self.assertRaises(DatabaseError):
             cursor.execute(query)
 

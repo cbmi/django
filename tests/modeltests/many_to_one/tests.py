@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 
 from django.core.exceptions import MultipleObjectsReturned, FieldError
+from django.db import connection
 from django.test import TestCase
 from django.utils import six
 from django.utils.translation import ugettext_lazy
@@ -170,7 +171,7 @@ class ManyToOneTests(TestCase):
         # The automatically joined table has a predictable name.
         self.assertQuerysetEqual(
             Article.objects.filter(reporter__first_name__exact='John').extra(
-                where=["many_to_one_reporter.last_name='Smith'"]),
+                where=["%s.last_name='Smith'" % connection.qualified_name(Reporter, compose=True)]),
             [
                 "<Article: John's second story>",
                 "<Article: This is a test>",
@@ -178,7 +179,7 @@ class ManyToOneTests(TestCase):
         # ... and should work fine with the unicode that comes out of forms.Form.cleaned_data
         self.assertQuerysetEqual(
             Article.objects.filter(reporter__first_name__exact='John'
-                                  ).extra(where=["many_to_one_reporter.last_name='%s'" % 'Smith']),
+                ).extra(where=["%s.last_name='%s'" % (connection.qualified_name(Reporter, compose=True), 'Smith')]),
             [
                 "<Article: John's second story>",
                 "<Article: This is a test>",

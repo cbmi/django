@@ -1,11 +1,31 @@
+import inspect
 from django.conf import settings
 from django.core import signals
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import (ConnectionHandler, ConnectionRouter,
     load_backend, DEFAULT_DB_ALIAS, DatabaseError, IntegrityError)
+from collections import namedtuple
 
-__all__ = ('backend', 'connection', 'connections', 'router', 'DatabaseError',
-    'IntegrityError', 'DEFAULT_DB_ALIAS')
+__all__ = ('backend', 'connection', 'connections', 'router', 'qualified_name',
+    'DatabaseError', 'IntegrityError', 'DEFAULT_DB_ALIAS')
+
+
+# All table names must be QNames. The db_format argument
+# tells if the qualified name is in a format that is ready
+# to be used in the database or if the qname needs to be
+# converted first.
+class QName(namedtuple('QName', ['schema', 'table', 'db_format'])):
+    """Represents components for a fully qualified SQL sequence, index,
+    or table name.
+
+    How these components are ultimately _composed_ is backend-specific.
+    If `model` is not passed in, this implies a raw usage of this name
+    and not associated with an existing model class.
+    """
+    def __new__(cls, schema, table, db_format, model=None):
+        tup = tuple.__new__(cls, (schema, table, db_format))
+        tup.model = model
+        return tup
 
 
 if DEFAULT_DB_ALIAS not in settings.DATABASES:
@@ -14,6 +34,18 @@ if DEFAULT_DB_ALIAS not in settings.DATABASES:
 connections = ConnectionHandler(settings.DATABASES)
 
 router = ConnectionRouter(settings.DATABASE_ROUTERS)
+
+
+def qualified_name(model, database=None, **hints):
+    "Given a model class or instance, return a qualified name."
+    if not inspect.isclass(model):
+        hints.setdefault('instance', model)
+        model = model.__class__
+    qname = model._meta.qualified_name
+    schema = router.schema_for_db(model, database, **hints)
+    if schema is not None:
+        qname = QName(schema, qname.table, qname.db_format, model)
+    return qname
 
 # `connection`, `DatabaseError` and `IntegrityError` are convenient aliases
 # for backend bits.

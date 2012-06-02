@@ -3,6 +3,7 @@ Query subclasses which provide extra functionality beyond simple data retrieval.
 """
 
 from django.core.exceptions import FieldError
+from django.db import connections
 from django.db.models.fields import DateField, FieldDoesNotExist
 from django.db.models.sql.constants import *
 from django.db.models.sql.datastructures import Date
@@ -42,7 +43,7 @@ class DeleteQuery(Query):
             where = self.where_class()
             where.add((Constraint(None, field.column, field), 'in',
                     pk_list[offset:offset + GET_ITERATOR_CHUNK_SIZE]), AND)
-            self.do_query(self.model._meta.db_table, where, using=using)
+            self.do_query(connections[using].qualified_name(self.model), where, using=using)
 
 class UpdateQuery(Query):
     """

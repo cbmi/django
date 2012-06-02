@@ -65,7 +65,7 @@ class SelectForUpdateTests(TransactionTestCase):
         # end_blocking_transaction() should be called.
         self.cursor = self.new_connection.cursor()
         sql = 'SELECT * FROM %(db_table)s %(for_update)s;' % {
-            'db_table': Person._meta.db_table,
+            'db_table': connection.qualified_name(self.new_Person, compose=True),
             'for_update': self.new_connection.ops.for_update_sql(),
             }
         self.cursor.execute(sql, ())
@@ -242,7 +242,7 @@ class SelectForUpdateTests(TransactionTestCase):
                 list(
                     Person.objects.raw(
                         'SELECT * FROM %s %s' % (
-                            Person._meta.db_table,
+                            connection.qualified_name(Person, compose=True),
                             connection.ops.for_update_sql(nowait=True)
                         )
                     )

@@ -242,7 +242,9 @@ class LegacyDatabaseTests(TestCase):
         dt = datetime.datetime(2011, 9, 1, 13, 20, 30)
         event = Event.objects.create(dt=dt)
         self.assertQuerysetEqual(
-                Event.objects.raw('SELECT * FROM timezones_event WHERE dt = %s', [dt]),
+                Event.objects.raw('SELECT * FROM %s WHERE dt = %%s'
+                                  % connection.qualified_name(Event, compose=True),
+                                  [dt]),
                 [event],
                 transform=lambda d: d)
 
@@ -462,7 +464,8 @@ class NewDatabaseTests(TestCase):
         dt = datetime.datetime(2011, 9, 1, 13, 20, 30, tzinfo=EAT)
         event = Event.objects.create(dt=dt)
         self.assertQuerysetEqual(
-                Event.objects.raw('SELECT * FROM timezones_event WHERE dt = %s', [dt]),
+                Event.objects.raw('SELECT * FROM %s WHERE dt = %%s'
+                                  % connection.qualified_name(Event, compose=True), [dt]),
                 [event],
                 transform=lambda d: d)
 

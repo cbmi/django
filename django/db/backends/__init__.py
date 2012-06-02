@@ -7,7 +7,7 @@ except ImportError:
 from contextlib import contextmanager
 
 from django.conf import settings
-from django.db import DEFAULT_DB_ALIAS
+from django.db import DEFAULT_DB_ALIAS, QName, qualified_name
 from django.db.backends import util
 from django.db.transaction import TransactionManagementError
 from django.utils.functional import cached_property
@@ -46,6 +46,17 @@ class BaseDatabaseWrapper(object):
 
     def __ne__(self, other):
         return not self == other
+
+    def _get_schema(self):
+        return self.settings_dict['SCHEMA']
+    schema = property(_get_schema)
+
+    def _get_test_schema_prefix(self):
+        return self.settings_dict['TEST_SCHEMA_PREFIX']
+    test_schema_prefix = property(_get_test_schema_prefix)
+
+    def convert_schema(self, schema):
+        return schema or self.schema
 
     def _commit(self):
         if self.connection is not None:
@@ -317,6 +328,30 @@ class BaseDatabaseWrapper(object):
     def make_debug_cursor(self, cursor):
         return util.CursorDebugWrapper(cursor, self)
 
+    def qualified_name(self, model, compose=False, **hints):
+        """Returns a qualified name for `model`. If `compose` is true, return
+        a the database-dependent string representation of it.
+        """
+        if isinstance(model, tuple):
+            if isinstance(model, QName):
+                qname = model
+                if qname.model is not None:
+                    qname = qualified_name(qname.model, self.alias, **hints)
+                model = qname.model
+            else:
+                qname = QName(*model)
+                model = None
+        else:
+            qname = qualified_name(model, self.alias, **hints)
+
+        if qname.schema is None and self.schema:
+            qname = QName(schema=self.schema, table=qname.table,
+                    db_format=qname.db_format, model=model)
+        if compose:
+            return self.ops.compose_qualified_name(qname)
+        return qname
+
+
 class BaseDatabaseFeatures(object):
     allows_group_by_pk = False
     # True if django.db.backend.utils.typecast_timestamp is used on values
@@ -416,6 +451,11 @@ class BaseDatabaseFeatures(object):
     # Support for the DISTINCT ON clause
     can_distinct_on_fields = False
 
+    # If the database has databases and schemas as different concepts
+    # or plain fakes schemas, it is safe to skip conflicts checking in
+    # testing on that database.
+    namespaced_schemas = False
+
     def __init__(self, connection):
         self.connection = connection
 
@@ -467,7 +507,7 @@ class BaseDatabaseOperations(object):
         self.connection = connection
         self._cache = None
 
-    def autoinc_sql(self, table, column):
+    def autoinc_sql(self, qualified_name, column):
         """
         Returns any SQL needed to support auto-incrementing primary keys, or
         None if no SQL is necessary.
@@ -548,7 +588,7 @@ class BaseDatabaseOperations(object):
         """
         return "DROP CONSTRAINT"
 
-    def drop_sequence_sql(self, table):
+    def drop_sequence_sql(self, qualified_name):
         """
         Returns any SQL necessary to drop the sequence for the given table.
         Returns None if no SQL is necessary.
@@ -618,7 +658,7 @@ class BaseDatabaseOperations(object):
 
         return smart_unicode(sql) % u_params
 
-    def last_insert_id(self, cursor, table_name, pk_name):
+    def last_insert_id(self, cursor, qualified_name, pk_name):
         """
         Given a cursor object that has just performed an INSERT statement into
         a table that has an auto-incrementing ID, returns the newly created ID.
@@ -697,6 +737,13 @@ class BaseDatabaseOperations(object):
         """
         raise NotImplementedError()
 
+    def compose_qualified_name(self, qualified_name):
+        """
+        Formats the given schema, table_name tuple into database's
+        qualified and quoted name format. The schema can be None.
+        """
+        raise NotImplementedError
+
     def random_function_sql(self):
         """
         Returns a SQL expression that returns a random value.
@@ -742,7 +789,7 @@ class BaseDatabaseOperations(object):
         """
         return ''
 
-    def sql_flush(self, style, tables, sequences):
+    def sql_flush(self, style, tables, sequences, from_db):
         """
         Returns a list of SQL statements required to remove all data from
         the given database tables (without actually removing the tables
@@ -750,6 +797,9 @@ class BaseDatabaseOperations(object):
 
         The `style` argument is a Style object as returned by either
         color_style() or no_style() in django.core.management.color.
+
+        The from_db argument tells if the names are coming from database
+        or from model._meta, needed for schema support.
         """
         raise NotImplementedError()
 
@@ -915,23 +965,86 @@ class BaseDatabaseIntrospection(object):
         distinguish between a FloatField and IntegerField, for example."""
         return self.data_types_reverse[data_type]
 
-    def table_name_converter(self, name):
-        """Apply a conversion to the name for the purposes of comparison.
+    def qname_converter(self, qname, force_schema=False):
+        """
+        Apply a conversion to the name for the purposes of comparison.
 
         The default table name converter is for case sensitive comparison.
+
+        The given name must be a QName. If force_schema is set, then backends
+        should try to append a default schema name to the given name if
+        applicable for the backend.
         """
-        return name
+        return qname
+
+    def identifier_converter(self, identifier):
+        """
+        On some backends we need to do a little acrobaty to convert the names
+        from the DB and names from Models into consistent format. For example,
+        the return types from DB might be upper-case, but we need them
+        lower-case for comparisons. This method can be used to convert
+        identifiers into consistent format.
+        """
+        return identifier
 
     def table_names(self, cursor=None):
         """
-        Returns a list of names of all tables that exist in the database.
+        Returns a list of names of all tables that are visible in the
+        database.
+
         The returned table list is sorted by Python's default sorting. We
         do NOT use database's ORDER BY here to avoid subtle differences
         in sorting order between databases.
         """
         if cursor is None:
             cursor = self.connection.cursor()
-        return sorted(self.get_table_list(cursor))
+        return sorted(self.get_visible_tables_list(cursor))
+
+    def get_visible_tables_list(self, cursor):
+        """
+        Returns all visible ("in search path") tables from the database.
+        """
+        return []
+
+    def qualified_names(self, schemas=None):
+        """
+        Returns qualified table names for all the given schemas. If the
+        schemas is None, then returns visible tables.
+        """
+        cursor = self.connection.cursor()
+        if schemas is None:
+            return self.get_visible_tables_list(cursor)
+        else:
+            return
+
+    def all_qualified_names(self):
+        """
+        Gets all table names from the database. note that it is intentional
+        that visible tables appear both as unqualified and qualified tables.
+        """
+        cursor = self.connection.cursor()
+        nonqualified_tables = self.get_visible_tables_list(cursor)
+        schemas = self.connection.creation.get_schemas()
+        schemas = [self.connection.convert_schema(s) for s in schemas]
+        qualified_tables = self.get_qualified_tables_list(cursor, schemas)
+        return sorted([QName(None, t, from_db) for _, t, from_db
+                       in nonqualified_tables] + qualified_tables)
+
+    def get_qualified_tables_list(self, cursor, schemas):
+        """
+        returns schema qualified names (as pair schema, tbl_name) of all
+        tables in the given schemas.
+        """
+        return []
+
+    def get_schema_list(self, cursor):
+        "returns a list of schemas that exist in the database"
+        return []
+
+    def schema_names(self):
+        "returns a list of schemas that exist in the database"
+        cursor = self.connection.cursor()
+        return self.get_schema_list(cursor)
 
     def get_table_list(self, cursor):
         """
@@ -942,11 +1055,11 @@ class BaseDatabaseIntrospection(object):
 
     def django_table_names(self, only_existing=False):
         """
-        Returns a list of all table names that have associated Django models and
-        are in INSTALLED_APPS.
+        Returns a list of all tables' qualified names that have associated
+        Django models and are in INSTALLED_APPS.
 
-        If only_existing is True, the resulting list will only include the tables
-        that actually exist in the database.
+        If only_existing is True, the resulting list will only include the
+        tables that actually exist in the database.
         """
         from django.db import models, router
         tables = set()
@@ -956,34 +1069,43 @@ class BaseDatabaseIntrospection(object):
                     continue
                 if not router.allow_syncdb(self.connection.alias, model):
                     continue
-                tables.add(model._meta.db_table)
-                tables.update([f.m2m_db_table() for f in model._meta.local_many_to_many])
+                tables.add(self.connection.qualified_name(model))
+                tables.update([self.connection.qualified_name(f.m2m_qualified_name())
+                               for f in model._meta.local_many_to_many])
         tables = list(tables)
         if only_existing:
-            existing_tables = self.table_names()
-            tables = [
-                t
-                for t in tables
-                if self.table_name_converter(t) in existing_tables
-            ]
-        return tables
+            found_tables = []
+            existing_tables = self.all_qualified_names()
+            found_tables.extend([
+                t for t in tables
+                if self.qname_converter(t) in existing_tables
+            ])
+            return found_tables
+        else:
+            return tables
 
     def installed_models(self, tables):
-        "Returns a set of all models represented by the provided list of table names."
+        """
+        Returns a set of all models represented by the provided list of table names.
+
+        The given tables are assumed to be pre-converted.
+        """
         from django.db import models, router
         all_models = []
         for app in models.get_apps():
             for model in models.get_models(app):
                 if router.allow_syncdb(self.connection.alias, model):
                     all_models.append(model)
-        tables = map(self.table_name_converter, tables)
         return set([
-            m for m in all_models
-            if self.table_name_converter(m._meta.db_table) in tables
+            model for model in all_models
+            if self.qname_converter(self.connection.qualified_name(model)) in tables
         ])
 
     def sequence_list(self):
-        "Returns a list of information about all DB sequences for all models in all apps."
+        """
+        Returns a list of information about all DB sequences for all models
+        in all apps.
+        """
         from django.db import models, router
 
         apps = models.get_apps()
@@ -995,16 +1117,20 @@ class BaseDatabaseIntrospection(object):
                     continue
                 if not router.allow_syncdb(self.connection.alias, model):
                     continue
+                qname = self.qname_converter(self.connection.qualified_name(model))
                 for f in model._meta.local_fields:
                     if isinstance(f, models.AutoField):
-                        sequence_list.append({'table': model._meta.db_table, 'column': f.column})
+                        sequence_list.append({'qname': qname, 'column': f.column})
                         break # Only one AutoField is allowed per model, so don't bother continuing.
 
                 for f in model._meta.local_many_to_many:
                     # If this is an m2m using an intermediate table,
                     # we don't need to reset the sequence.
                     if f.rel.through is None:
-                        sequence_list.append({'table': f.m2m_db_table(), 'column': None})
+                        sequence_list.append({
+                            'qname': self.qname_converter(self.connection.qualified_name(f.m2m_qualified_name())),
+                            'column': None
+                        })
 
         return sequence_list
 

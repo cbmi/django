@@ -7,6 +7,7 @@ import sys
 
 from django.conf import settings
 from django.core.exceptions import FieldError
+from django.contrib.sites.models import Site
 from django.db import DatabaseError, connection, connections, DEFAULT_DB_ALIAS
 from django.db.models import Count
 from django.db.models.query import Q, ITER_CHUNK_SIZE, EmptyQuerySet
@@ -392,7 +393,7 @@ class Queries1Tests(BaseQuerysetTest):
 
     def test_ticket2496(self):
         self.assertQuerysetEqual(
-            Item.objects.extra(tables=['queries_author']).select_related().order_by('name')[:1],
+            Item.objects.extra(tables=[Author._meta.qualified_name]).select_related().order_by('name')[:1],
             ['<Item: four>']
         )
 
@@ -512,7 +513,12 @@ class Queries1Tests(BaseQuerysetTest):
         self.assertEqual(d, {'a': 'one', 'b': 'two'})
 
         # Order by the number of tags attached to an item.
-        l = Item.objects.extra(select={'count': 'select count(*) from queries_item_tags where queries_item_tags.item_id = queries_item.id'}).order_by('-count')
+        l = Item.objects.extra(select={
+            'count':'select count(*) from %s where %s.item_id = %s.id' %
+            (connection.qualified_name(Item.tags.through, compose=True),
+            connection.qualified_name(Item.tags.through, compose=True),
+            connection.qualified_name(Item, compose=True))
+        }).order_by('-count')
         self.assertEqual([o.count for o in l], [2, 2, 1, 0])
 
     def test_ticket6154(self):
@@ -582,11 +588,15 @@ class Queries1Tests(BaseQuerysetTest):
 
     def test_ticket7098(self):
         # Make sure semi-deprecated ordering by related models syntax still
-        # works.
-        self.assertValueQuerysetEqual(
-            Item.objects.values('note__note').order_by('queries_note.note', 'id'),
-            [{'note__note': 'n2'}, {'note__note': 'n3'}, {'note__note': 'n3'}, {'note__note': 'n3'}]
-        )
+        # works.        
+        # Skip this test if schema support is in effect - there is little point to fix the
+        # deprecated .order_by() notation to support schemas.
+        if not connection.schema:
+            self.assertValueQuerysetEqual(
+                # Need to remove the quotes from the table name for this test...
+                Item.objects.values('note__note').order_by('%s.note' % connection.qualified_name(Note).table, 'id'),
+                [{'note__note': u'n2'}, {'note__note': u'n3'}, {'note__note': u'n3'}, {'note__note': u'n3'}]
+            )
 
     def test_ticket7096(self):
         # Make sure exclude() with multiple conditions continues to work.
@@ -1254,7 +1264,8 @@ class Queries5Tests(TestCase):
         # Ordering of extra() pieces is possible, too and you can mix extra
         # fields and model fields in the ordering.
         self.assertQuerysetEqual(
-            Ranking.objects.extra(tables=['django_site'], order_by=['-django_site.id', 'rank']),
+            Ranking.objects.extra(tables=[Site._meta.qualified_name],
+                                  order_by=['-%s.id' % connection.qualified_name(Site, compose=True), 'rank']),
             ['<Ranking: 1: a3>', '<Ranking: 2: a2>', '<Ranking: 3: a1>']
         )
 
@@ -1289,7 +1300,7 @@ class Queries5Tests(TestCase):
 
     def test_ticket7045(self):
         # Extra tables used to crash SQL construction on the second use.
-        qs = Ranking.objects.extra(tables=['django_site'])
+        qs = Ranking.objects.extra(tables=[connection.qualified_name(Site).table])
         qs.query.get_compiler(qs.db).as_sql()
         # test passes if this doesn't raise an exception.
         qs.query.get_compiler(qs.db).as_sql()
