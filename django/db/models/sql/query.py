@@ -956,20 +956,6 @@ class Query(object):
                 self.unref_alias(alias)
         self.included_inherited_models = {}
 
-    def need_having(self, q_object):
-        """
-        Returns whether or not all elements of this q_object need to be put
-        together in the HAVING clause.
-        """
-        for child in q_object.children:
-            if isinstance(child, Node):
-                if self.need_having(child):
-                    return True
-            elif (refs_aggregate(child[0].split(LOOKUP_SEP), self.aggregates)
-                  or (hasattr(child[1], 'contains_aggregate')
-                      and child[1].contains_aggregate(self.aggregates))):
-                return True
-        return False
 
     def add_aggregate(self, aggregate, model, alias, is_summary):
         """
@@ -1020,7 +1006,8 @@ class Query(object):
         aggregate.add_to_query(self, alias, col=col, source=source, is_summary=is_summary)
 
     def add_filter(self, filter_expr, connector=AND, trim=False, can_reuse=None,
-                   process_extras=True, target_clause=None, path=None):
+                   process_extras=True, target_clause=None, in_having=False,
+                   in_negated=False):
         """
         Add a single filter to the query. The 'filter_expr' is a pair:
         (filter_string, value). E.g. ('name__contains', 'fred')
@@ -1039,17 +1026,9 @@ class Query(object):
         during the processing of extra filters to avoid infinite recursion.
         """
         assert target_clause is not None
-        if path is None:
-            path = []
         arg, value = filter_expr
         parts = arg.split(LOOKUP_SEP)
-        in_having = 'HAVING' in path
-        negate = bool([p for p in path if 'NOT' in p])
-        if (not in_having and (refs_aggregate(parts, self.aggregates)
-                               or (hasattr(value, 'contains_aggregate')
-                                   and value.contains_aggregate(self.aggregates)))):
-            target_clause = self.switch_to_having(path)
-            in_having = True
+        negate = in_negated
         if not parts:
             raise FieldError("Cannot parse keyword query %r" % arg)
 
@@ -1110,7 +1089,7 @@ class Query(object):
                     process_extras=process_extras)
         except MultiJoin as e:
             self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]),
-                               can_reuse, target_clause=target_clause, path=path)
+                               can_reuse, target_clause, in_having, in_negated)
             return
 
         table_promote = False
@@ -1206,22 +1185,63 @@ class Query(object):
             can_reuse.update(join_list)
         if process_extras:
             for filter in extra_filters:
-                self.add_filter(filter, path=path, can_reuse=can_reuse,
-                        process_extras=False, target_clause=target_clause)
+                self.add_filter(filter, can_reuse=can_reuse, in_negated=in_negated,
+                                process_extras=False, target_clause=target_clause,
+                                in_having=in_having)
         # Check if we can get rid of the added intermediate node. In the
         # common case it has just one child and we can get rid of it.
         parent_clause.prune_tree()
 
-    def switch_to_having(self, path):
-        target_clause = self.having
-        if len([p for p in path if 'NOT' in p]) % 2:
-            # There is an odd number of NOT operators in the path - 
-            # so we must append a NOT node to the the having clause.
-            target_clause = self.where_class(negated=True)
-            self.having.add(target_clause)
-        return target_clause
+    def need_having(self, obj):
+        """
+        Returns whether or not all elements of this q_object need to be put
+        together in the HAVING clause.
+        """
+        if not isinstance(obj, Node):
+            return (refs_aggregate(obj[0].split(LOOKUP_SEP), self.aggregates)
+                    or (hasattr(obj[1], 'contains_aggregate')
+                        and obj[1].contains_aggregate(self.aggregates)))
+        return any(self.need_having(c) for c in obj.children)
 
-    def add_q(self, q_object, used_aliases=None, target_clause=None, path=None):
+    def find_having_splits(self, q_object, negated=False):
+        """
+        Returns a list of q_objects which need to go into the having clause
+        instead of the where clause. Removes the splitted out nodes from the
+        given q_object.
+        """
+        ret = []
+        for c in q_object.children[:]:
+            if isinstance(c, Node):
+                if c.connector == OR and self.need_having(c):
+                    # A subtree starting from OR clause must go into having in
+                    # whole if any part of that tree references an aggregate.
+                    q_object.children.remove(c)
+                    ret.append(c)
+                    c.negated = c.negated ^ negated
+                else:
+                    ret.extend(self.find_having_splits(c, c.negated ^ negated))
+            elif self.need_having(c):
+                q_object.children.remove(c)
+                new_q = self.where_class(children=[c], negated=negated) 
+                ret.append(new_q)
+        return ret
+
+    def add_q(self, q_object):
+        """
+        A preprocessor for the internal _add_q(). Responsible for
+        splitting the given q_object into where and having parts and
+        setting up some internal variables.
+        """
+        having_parts = self.find_having_splits(q_object, q_object.negated)
+        used_aliases = self.used_aliases
+        self._add_q(q_object, used_aliases, self.where)
+        for hp in having_parts:
+            self._add_q(hp, used_aliases, self.having, in_having=True)
+        if self.filter_is_sticky:
+            self.used_aliases = used_aliases
+
+    def _add_q(self, q_object, used_aliases, target_clause,
+               in_negated=False, in_having=False):
         """
         Adds a Q-object to the current filter.
 
@@ -1234,50 +1254,31 @@ class Query(object):
           - The target_clause contains the current in-use WhereNode.
           - The used_aliases keeps track of all the referenced aliases.
         """
-        if target_clause is None:
-            target_clause = self.where
-        if used_aliases is None:
-            used_aliases = self.used_aliases
-        if path is None:
-            path = []
-        if hasattr(q_object, 'add_to_query'):
-            # Complex custom objects are responsible for adding themselves.
-            q_object.add_to_query(self, used_aliases)
-        else:
-            connector = q_object.connector
-            negated = q_object.negated
-            path.append(connector + ' NOT' if negated else '')
-            if 'HAVING' not in path and connector == OR and self.need_having(q_object):
-                # The whole subtree must go to HAVING clause once we are inside an
-                # ORred branch and at least one clause targets the having clause.
-                target_clause = self.switch_to_having(path)
-                path.append('HAVING')
+        connector = q_object.connector
+        negated = q_object.negated
+        in_negated = in_negated or negated
+        # Note that if the connector happens to match what we have already in
+        # the tree, the combine will be a no-op.
+        target_clause = target_clause.combine(
+            self.where_class(connector=connector, negated=negated),
+            target_clause.connector)
 
-            # Note that if the connector happens to match what we have already in
-            # the tree, the combine will be a no-op.
-            target_clause = target_clause.combine(
-                self.where_class(connector=connector, negated=negated),
-                target_clause.connector)
-
-            for child in q_object.children:
-                if connector == OR:
-                    refcounts_before = self.alias_refcount.copy()
-                if isinstance(child, Node):
-                    self.add_q(child, used_aliases, target_clause, path)
-                else:
-                    self.add_filter(child, connector, can_reuse=used_aliases,
-                                    target_clause=target_clause, path=path)
-                if connector == OR:
-                    # Aliases that were newly added or not used at all need to
-                    # be promoted to outer joins if they are nullable relations.
-                    # (they shouldn't turn the whole conditional into the empty
-                    # set just because they don't match anything).
-                    self.promote_unused_aliases(refcounts_before, used_aliases)
-        if self.filter_is_sticky:
-            self.used_aliases = used_aliases
-        if path.pop() == 'HAVING':
-            # In case we added HAVING clause above, we need to pop two times.
-            path.pop()
+        for child in q_object.children:
+            if connector == OR:
+                refcounts_before = self.alias_refcount.copy()
+            if isinstance(child, Node):
+                self._add_q(child, used_aliases, target_clause, in_negated,
+                          in_having)
+            else:
+                self.add_filter(child, connector, can_reuse=used_aliases,
+                                target_clause=target_clause,
+                                in_negated=in_negated, in_having=in_having)
+            if connector == OR:
+                # Aliases that were newly added or not used at all need to
+                # be promoted to outer joins if they are nullable relations.
+                # (they shouldn't turn the whole conditional into the empty
+                # set just because they don't match anything).
+                self.promote_unused_aliases(refcounts_before, used_aliases)
 
     def setup_joins(self, names, opts, alias, dupe_multis, allow_many=True,
             allow_explicit_fk=False, can_reuse=None, negate=False,
@@ -1563,14 +1564,13 @@ class Query(object):
                 self.dupe_avoidance[ident, name] = set([alias])
 
     def split_exclude(self, filter_expr, prefix, can_reuse,
-                      target_clause=None, path=None):
+                      target_clause, in_having, in_negated):
         """
         When doing an exclude against any kind of N-to-many relation, we need
         to use a subquery. This method constructs the nested query, given the
         original exclude filter (filter_expr) and the portion up to the first
         N-to-many relation field.
         """
-        assert target_clause is not None
         query = Query(self.model)
         query.add_filter(filter_expr, can_reuse=can_reuse,
                          target_clause=query.where)
@@ -1586,7 +1586,7 @@ class Query(object):
 
         self.add_filter(('%s__in' % prefix, query), trim=True,
                         can_reuse=can_reuse, target_clause=target_clause,
-                        path=path)
+                        in_having=in_having, in_negated=in_negated)
 
         # If there's more than one join in the inner query (before any initial
         # bits were trimmed -- which means the last active table is more than
@@ -1598,8 +1598,9 @@ class Query(object):
         active_positions = [pos for (pos, count) in
                 enumerate(query.alias_refcount.itervalues()) if count]
         if active_positions[-1] > 1:
-            self.add_filter(('%s__isnull' % prefix, False), path=path,
-                    trim=True, can_reuse=can_reuse, target_clause=target_clause)
+            self.add_filter(('%s__isnull' % prefix, False), in_having=in_having,
+                            in_negated=in_negated, trim=True,
+                            can_reuse=can_reuse, target_clause=target_clause)
 
     def set_limits(self, low=None, high=None):
         """
