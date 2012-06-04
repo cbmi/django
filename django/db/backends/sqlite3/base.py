@@ -106,9 +106,10 @@ class DatabaseFeatures(BaseDatabaseFeatures):
 class DatabaseOperations(BaseDatabaseOperations):
     def bulk_batch_size(self, fields, objs):
         """
-        SQLite has a limit of 1000 variables per query.
+        SQLite has a compile-time default (SQLITE_LIMIT_VARIABLE_NUMBER) of
+        999 variables per query. 
         """
-        return max(999 / len(fields), 1)
+        return (999 // len(fields)) if len(fields) > 0 else len(objs)
 
     def date_extract_sql(self, lookup_type, field_name):
         # sqlite doesn't support extract, so we fake it with the user-defined

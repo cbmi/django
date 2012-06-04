@@ -478,13 +478,10 @@ class BaseDatabaseOperations(object):
     def bulk_batch_size(self, fields, objs):
         """
         Returns the maximum allowed batch size for the backend. The fields
-        are the fields we will be inserting in the batch, the objs contains
+        are the fields going to be inserted in the batch, the objs contains
         all the objects to be inserted.
-
-        The default return value of None means unlimited. This method must
-        always return a valuer greater than 0.
         """
-        return None
+        return len(objs)
 
     def date_extract_sql(self, lookup_type, field_name):
         """
