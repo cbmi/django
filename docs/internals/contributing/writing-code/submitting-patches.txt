@@ -6,13 +6,12 @@ We're always grateful for patches to Django's code. Indeed, bug reports
 with associated patches will get fixed *far* more quickly than those
 without patches.
 
-Typo fixes, trivial documentation changes
------------------------------------------
+Typo fixes and trivial documentation changes
+--------------------------------------------
 
 If you are fixing a really trivial issue, for example changing a word in the
 documentation, the preferred way to provide the patch is using Github pull
-requests. Trac tickets are also acceptable, but it can be somewhat cubersome
-to use the full Trac workflow for trivial changes.
+requests without a Trac ticket. Trac tickets are also acceptable.
 
 See the Working with Git documentation for more details of how to use pull
 requests.
@@ -80,7 +79,8 @@ Of course, going through the steps of claiming tickets is overkill in some
 cases. In the case of small changes, such as typos in the documentation or
 small bugs that will only take a few minutes to fix, you don't need to jump
 through the hoops of claiming tickets. Just submit your patch and be done with
-it.
+it. Of course, it is always acceptible, regardless of the ticket's ownership
+status, to submit patches to a ticket if you happen to have a patch ready.
 
 .. _patch-style:
 
@@ -103,15 +103,13 @@ requirements:
   documentation.
 
 You can use either Github branches and pull requests or direct patches
-to publish your work. If you use the git workflow, then you should
+to publish your work. If you use the Git workflow, then you should
 announce your branch in the ticket by including a link to your branch.
 When you think your work is ready to be merged in create a pull request.
 See the :doc:`working-with-git` documentation for mode details.
 
 You can also use patches in Trac. When using this style, follow these
 guidelines.
-
-* Make sure your code matches our :doc:`coding-style`.
 
 * Submit patches in the format returned by the ``git diff`` command.
   An exception is for code changes that are described more clearly in
@@ -125,6 +123,10 @@ guidelines.
 
 * Name the patch file with a ``.diff`` extension; this will let the ticket
   tracker apply correct syntax highlighting, which is quite helpful.
+
+Regardless of the way you submit your work, follow these steps.
+
+* Make sure your code matches our :doc:`coding-style`.
 
 * Check the "Has patch" box on the ticket details. This will make it
   obvious that the ticket includes a patch, and it will add the ticket to

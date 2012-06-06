@@ -22,7 +22,11 @@ In the following we are going to create a ready to be merged github pull
 request containing the changes to Trac ticket #xxxxx. By creating a fully
 ready pull request you will be easing the work of committers, and thus your
 work is more likely to be pulled in. You can also create a traditional patch
-to Trac. This can be easier, but is not the preferred way.
+to Trac. This can be easier, but it is not the preferred way.
+
+Note that the following aims for perfect pull request.It is not a requirement
+to follow all of the steps below. In general, the better quality your pull
+request is, the better your chances for getting your work in.
 
 .. _Git: http://git-scm.com/
 .. _Github: https://github.com/
@@ -37,8 +41,8 @@ of Django's repository you should next create a local copy of your fork::
   git clone git@github.com:github_nick/django.git
 
 This will create a new directory "django" containing a clone of your Github
-repository. The github repository will be called "origin" in Git. You should
-also setup django/django as a "upstream" remote::
+repository. Your github repository will be called "origin" in Git. You should
+also setup django/django as an "upstream" remote::
 
   git remote add upstream git@github.com:django/django.git
   git fetch upstream
@@ -50,8 +54,8 @@ You can add other remotes similarly, for example::
 Working on a ticket
 -------------------
 
-When working on a ticket you will usually want to create a new branch for the
-work, and base that work on upstream/master::
+When working on a ticket you will almost always want to create a new branch
+for the work, and base that work on upstream/master::
 
   git checkout -b ticket_xxxxx upstream/master
 
@@ -63,13 +67,16 @@ Assume the work is carried on ticket_xxxxx branch. Make some changes and
 commit them::
 
   $EDITOR somefile.py
-  git commit -m 'Fixed ticket_xxxxx -- details...'
+  git commit
+  # Write a commit message. You might want to aim to use the commit message
+  # guidelines mentioned at doc:`working-with-git` to ease the work of the
+  # committer. In any case, aim to describe what this commit did.
 
 You might need to do additional work on your branch, for example spotting
 white-space errors. In your local repository you should commit code often::
 
   $EDITOR somefile.py
-  git commit -m 'Fixed whitespace warnings.'
+  git commit -m 'Fixed whitespace warnings introduced in previous commit'
 
 Publishing work
 ~~~~~~~~~~~~~~~
@@ -79,8 +86,8 @@ You can publish your work on Github by just using::
   git push origin ticket_xxxxx
 
 When you go to your Github page you will notice a new branch has been created.
-If you are working on a Trac ticket, you should mention that your work is
-available from ticket_xxxxx branch in your Github fork. Include a link.
+If you are working on a Trac ticket, you should mention in the ticket that your
+work is available from branch ticket_xxxxx of your github repo. Include a link.
 
 Note that the above branch is called a "topic branch" in Git parlance. This
 means that other people should not base their work on your branch. In
@@ -95,8 +102,9 @@ a pull request at Github. A good pull request contains:
 
 * Commits containing one logical change each
 
-* Each commit comes with a well formed commit message: 50 char summary line,
-  paragraphs of 72 chars thereafter, see "committing code" for more details.
+* Each commit comes with a well formed commit message: a summary line and then
+  paragraphs of 72 chars thereafter, see
+  :doc:`/internals/contributing/committing-code` for more details.
 
 * The code changes are accompanied with documentation and test changes if
   needed.
@@ -111,22 +119,17 @@ a pull request at Github. A good pull request contains:
 * The work should be ready for direct pull. If not, mention clearly what needs
   more work in your opinion.
 
-Creating pull requests fullfilling all the requirements above might seem
-like a lot of work. However, note that any of the steps you skip above must
-then be done by the committer. So, by leaving out some of the above steps
-you will increase the work needed by the core committers. This of course
-lessens your submissions chance to be pulled in. The only acceptable reason
-to skip any of the above steps is not knowing how to do them properly.
+The more of the above you are able to do, the better your chances for getting
+your work committed.
 
 Rebasing branches
 ~~~~~~~~~~~~~~~~~
 
 In the example above you created two commits, the "Fixed ticket_xxxxx" commit
-and "Whitespace cleanup" commit. We do not want to have the
-"whitespace cleanup" commit in the Django's repository as it would just be
-useless noise. Instead, we would like to only have one commit. To rework the
-history of your branch you can squash the commits into one by using
-interactive rebase::
+and "Whitespace cleanup" commit. We do not want to have the "whitespace
+cleanup" commit in the Django's repository as it would just be useless noise.
+Instead, we would like to only have one commit. To rework the history of your
+branch you can squash the commits into one by using interactive rebase::
 
   git rebase -i HEAD~2
 
@@ -135,8 +138,19 @@ will open an editor showing the two commits, prefixed with the word "pick".
 You should change the second line to "squash" instead. This will keep the
 first commit, and squash the second commit to the first one. Save and quit
 the editor. A second editor window should open. Here you can reword the
-commit message. Usually it is best to keep the original commit message and
-remove rest of the text.
+commit message for the commit.
+
+You can also use the "edit" option in rebase. This way you can change a single
+commit. For example:
+
+  git rebase -i HEAD~3
+  # Choose edit, pick, pick for the commits
+  # Now you are able to rework the commit (use git add normally to add changes)
+  # When finished, commit work with "--amend" and continue
+  git commit --amend
+  # reword the commit message if needed
+  git rebase --continue
+  # The second and third commit should be applied.
 
 If you need to change an already published topic branch at Github, you will
 need to force-push the changes to github::
@@ -157,25 +171,58 @@ do this, use::
   git fetch upstream
   git rebase
 
-The work is automatically rebased on the branch you forked on, in the example
-case on upstream/master.
+The work is automatically rebased using the branch you forked on, in the
+example case using upstream/master.
 
-The rebase command removes all your local commits, applies the upstream
-commits, and then applies your local commits successively. If there are merge
-conflicts you will need to resolve them and then use git rebase --continue. At
-any point you can use git rebase --abort to return to the original state.
+The rebase command removes all your local commits temporarily, applies the
+upstream commits, and then applies your local commits again on the work. If
+there are merge conflicts you will need to resolve them and then use git
+rebase --continue. At any point you can use git rebase --abort to return to
+the original state.
 
-Note that you want to rebase on upstream, not merge the upsteam. The reason for
-this is that by rebasing, your commits will always be on top of the upstream
-work, not mixed with the changes in the upstream. This way it is clear your
-branch is about the topic commits, and this makes commit squashing easier for
-example.
+Note that you want to rebase on upstream, not merge the upstream. The reason
+for this is that by rebasing, your commits will always be on top of the
+upstream's work, not mixed with the changes in the upstream. This way it is
+clear your branch is about the topic commits, and this makes commit squashing
+easier for example.
+
+After review
+------------
+
+It is unusual to get any non-trivial amount of code into core without some need
+for changes in reviews. In this case, it is often a good idea to add the
+changes as one incremental commit to your work. This allows the reviewer to
+easily check what changes you have done::
+
+  # Do changes required by the reviewer, commit often.
+  # Before publishing the changes, rebase your work. Assume you added two
+  # commits to the work.
+  git rebase -i HEAD~2
+  # squash the second commit into the first, write a commit message something
+  # like this:
+  Made changes asked in review by the_reviewer
+
+    - Fixed whitespace errors in foo/bar
+    - Reworded the doc string of the_method()
+
+  # Push your work back to your github repo, there should not be any need
+  # for force (-f) push, as you didn't touch the public commits in the rebase.
+  git push origin ticket_xxxxx
+  # Check your pull request, it should now contain the new commit, too.
+
+The committer is likely to squash the review commit into the previous commit
+when committing the code.
+
+If there is need for larger amount of work, or if the pull request author
+hasn't responded in reasonable amount of time (in a couple of weeks), it is OK
+to close such a pull request with a comment asking for the author to reopen the
+pull request when the issues mentioned in the review have been resolved.
 
 Summary
 -------
 * Work on Github if possible
 * Announce your work on Trac ticket by linking to your github branch
 * When you have something ready, make a pull request
-* Ensure your pull request is good quality
+* Try to make your pull requests good quality
 * When doing fixes to your work, use git rebase -i to squash the commits
 * When upstream has changed, do git fetch upstream; git rebase.

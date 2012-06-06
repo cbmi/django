@@ -36,35 +36,68 @@ Committing guidelines
 ---------------------
 
 When committing Github pull requests make sure each commit in the pull request
-matches commit guidelines mentioned below. Ask the pull request creator to
-rework the commit history to acceptable form. Alternatively, rework the
-pull yourself to acceptable form, one way to do this is::
+matches commit guidelines mentioned below. Usually there is need to rework the
+commit history into accpetable format. It takes the least amount of work if the
+committer does the history rewriting. Here is one way to commit a pull
+request::
 
+  # Create new branch, tracking upstream/master (upstream is assumed to be
+  # django/django).
   git checkout -b pull_xx upstream/master
+  # Download the patches from github, apply the patches.
   curl https://github.com/django/django/pull/xx.patch | git am
-  # work on code, use git rebase -i etc to make sure the work is commit
-  # quality
+  # Work on code, use git rebase -i, git commit --amend to make sure the work
+  # is commit quality. Then add the work to local master:
   git checkout master
+  # Pull upstream changes to make sure your master is up to date.
   git pull upstream master
+  # Merge the work as "fast-forward" to master. This will make sure there
+  # are no additional merge commite.
   git merge --ff-only pull_xx
+  # Check what would be pushed to upstream.
   git push --dry-run upstream master
-  # check the work is good quality, contains the changes you expect
-  # do the final push
+  # Ensure the work is good quality, and contains only the changes you expect
+  # Do the final push
   git push upstream master
+  # You can now get rid of the pull_xx branch
+  git branch -d pull_xx
 
 Another way is to add the submitter as a new remote, do a checkout of the
 branch and work from there::
 
   git remote add foo <foo's github url>
+  # Here pull_xx will be your new local branch name,
   git checkout pull_xx foo foos_pull_branch
   # continue as above
 
-Note that using the github pull request merge functionality should be used
+Note that using the Github pull request merge functionality should be used
 only if the pull request is 100% ready, and you have checked the pull request
 for errors (or trust the request maker enough to skip checks).
 
-Please follow these guidelines when committing code to Django's Subversion
-repository:
+When rewriting the commit history for a pull request, the idea is to make sure
+Django's commit history is as usable as possible. Some notes for this:
+
+  * If a patch contains back-and-forth commits, then rewrite those into one.
+    The typical example is commit adding a method, then a commit which fixes
+    some whitespace errors in the previous commit.
+
+  * Separate changes to different commits by logical grouping: if you do a
+    whitespace cleanup at the same time you do other changes to a file,
+    separating the changes to two different commits will make reviewing history
+    easier.
+
+  * Tests should pass and docs should be buildable after each commit.
+
+  * Trivial and small patches usually are best done in one commit. Medium to
+    large work should be splitted to multiple commits if possible.
+
+Practicality beats purity, and so it is up to the committer to decide how much
+commit history mangling to do for a pull request. The main points are getting
+work done, and having an usable commit history. Beware of merge-commits of
+upstream branches in the pull requests!
+
+In addition, please follow these guidelines when committing code to Django's
+Git repository:
 
 * For any medium-to-big changes, where "medium-to-big" is according to
   your judgment, please bring things up on the `django-developers`_
@@ -83,21 +116,16 @@ repository:
   * Bad: "Fixes Unicode bug in RSS API."
   * Bad: "Fixing Unicode bug in RSS API."
 
-  The commit message should be in the 50/72 format - the subject line is
-  50 chars at maximum, followed by newline and then paragraphs of 72 char
-  lines. The limits are soft. In any case, the subject line should be one
-  line in and as short as possible. It is a good idea to include references
-  to affected tickes in the summary line, or in the paragraphs.::
+  The commit message should be in lines of 72 chars maximum. There should be
+  a subject line, separated by a blank line and then paragraphs of 72 char
+  lines. The limits are soft. For the subject line, shorter is better. In the
+  body of the commit message more detail is better than less::
 
     Fixed #18307 -- Added git workflow guidelines
 
     Refactored the Django's documentation to remove mentions of SVN
-    specific tasks. and to add guidelines of how to use Git, Github, and
-    how to use pull request together with Trac.
-
-    If this commit would fix other tickets also, include them in the
-    paragraphs: Fixed #12345, fixed #54321. References to tickets are
-    written as Refs #12345.
+    specific tasks. Added guidelines of how to use Git, Github, and
+    how to use pull request together with Trac instead.
 
     You can include thanks in the commit message: Thanks to A for
     suggestions and to B and C for reviews.
@@ -159,8 +187,8 @@ discovered, please follow these guidelines:
 
 * Never change the published history of django/django branches! If you
   absolutely must (for security reasons for example) first discuss the
-  situation with other core committers. So, never use git rebase, and
-  then force-push your changes to django/django.
+  situation with other core committers. Never force-push your changes
+  to django/django.
 
 * Try very hard to ensure that mistakes don't happen. Just because we
   have a reversion policy doesn't relax your responsibility to aim for

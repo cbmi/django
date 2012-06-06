@@ -48,7 +48,7 @@ Working with Django's master branch
 If you'd like to try out the in-development code for the next release
 of Django, or if you'd like to contribute to Django by fixing bugs or
 developing new features, you'll want to get the code from the master
-branch. (ADD: how to get copy of Git code).
+branch.
 
 Note that this will get *all* of Django: in addition to the top-level
 ``django`` module containing Python code, you'll also get a copy of
@@ -166,7 +166,6 @@ All of the above-mentioned branches now reside in
 Support and bugfix branches
 ---------------------------
 
-(CHECK: is the supported branches doc up to date?)
 In addition to fixing bugs in current trunk, the Django project
 provides official bug-fix support for the most recent released version
 of Django, and security support for the two most recently-released
@@ -181,7 +180,7 @@ branch ``stable/1.0.X`` was created to receive bug fixes, and shortly
 after the release of Django 1.1 the branch ``stable/1.1.X`` was created.
 
 Official support for the above mentioned releases has expired, and so
-they no longer receive direct maintenance from the Django project
+they no longer receive direct maintenance from the Django project.
 However, the branches continue to exist and interested community members
 have occasionally used them to provide unofficial support for old Django
 releases.
