@@ -159,6 +159,7 @@ class Widget(object):
     needs_multipart_form = False # Determines does this widget need multipart form
     is_localized = False
     is_required = False
+    warn_on_empty = True
 
     def __init__(self, attrs=None):
         if attrs is not None:
@@ -494,6 +495,8 @@ def boolean_check(v):
 
 
 class CheckboxInput(Widget):
+    warn_on_empty = False
+
     def __init__(self, attrs=None, check_test=None):
         super(CheckboxInput, self).__init__(attrs)
         # check_test is a callable that takes a value and returns True
@@ -739,6 +742,7 @@ class RadioSelect(Select):
         return id_
 
 class CheckboxSelectMultiple(SelectMultiple):
+    warn_on_empty = False
     def render(self, name, value, attrs=None, choices=()):
         if value is None: value = []
         has_id = attrs and 'id' in attrs

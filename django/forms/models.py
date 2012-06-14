@@ -5,7 +5,8 @@ and database field objects.
 
 from __future__ import absolute_import, unicode_literals
 
-from django.core.exceptions import ValidationError, NON_FIELD_ERRORS, FieldError
+from django.core.exceptions import (ValidationError, NON_FIELD_ERRORS,
+    FieldError, DangerousCodeWarning)
 from django.core.validators import EMPTY_VALUES
 from django.forms.fields import Field, ChoiceField
 from django.forms.forms import BaseForm, get_declared_fields
@@ -17,6 +18,8 @@ from django.utils.encoding import smart_unicode, force_unicode
 from django.utils.datastructures import SortedDict
 from django.utils.text import get_text_list, capfirst
 from django.utils.translation import ugettext_lazy as _, ugettext
+
+import warnings
 
 
 __all__ = (
@@ -225,7 +228,7 @@ class ModelFormMetaclass(type):
 class BaseModelForm(BaseForm):
     def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None,
                  initial=None, error_class=ErrorList, label_suffix=':',
-                 empty_permitted=False, instance=None):
+                 empty_permitted=False, instance=None, warn_missing_keys=True):
         opts = self._meta
         if instance is None:
             if opts.model is None:
@@ -302,6 +305,19 @@ class BaseModelForm(BaseForm):
     def clean(self):
         self._validate_unique = True
         return self.cleaned_data
+
+    def is_valid(self, warn_missing_keys=True):
+        if self.data is not None and warn_missing_keys:
+            missing = [name for name, field in self.fields.items()
+                       if name not in self.data and field.warn_on_empty]
+            for name in missing:
+                # This is just a quick hack - Of course this is not a DeprecationWarning.
+                warnings.warn("The field %s is part of this form's fields, "
+                              "but can't be found from self.data. "
+                              "Possiblility of security and data loss "
+                              "issues exists!" % name, DangerousCodeWarning)
+        return super(BaseModelForm, self).is_valid()
+
 
     def _post_clean(self):
         opts = self._meta

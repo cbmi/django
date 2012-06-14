@@ -112,6 +112,14 @@ class Field(object):
 
         self.validators = self.default_validators + validators
 
+    def _warn_on_empty(self):
+        """
+        If this field is part of ModelForm's fields but not part of given
+        data is there reason to suspect misuse of ModelForm?
+        """
+        return self.widget.warn_on_empty
+    warn_on_empty = property(_warn_on_empty)
+
     def prepare_value(self, value):
         return value
 

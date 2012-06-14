@@ -18,6 +18,13 @@ class SuspiciousOperation(Exception):
     "The user did something suspicious"
     pass
 
+class DangerousCodeWarning(Warning):
+    """
+    The developer has code structures which might be suspectible to
+    security or other serious issues.
+    """
+    pass
+
 class PermissionDenied(Exception):
     "The user did not have permission to do that"
     pass
